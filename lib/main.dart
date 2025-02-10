@@ -1,5 +1,7 @@
 
 import 'dart:io';
+import 'dart:ui';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -47,19 +49,26 @@ class _MyHomePageState extends State<MyHomePage> {
   CameraLensDirection camDirec = CameraLensDirection.front;
   late List<Recognition> recognitions = [];
 
+  //TODO declare face detector
   late FaceDetector faceDetector;
+
+  //TODO declare face recognizer
   late Recognizer recognizer;
 
   @override
   void initState() {
     super.initState();
 
+    //TODO initialize face detector
     var options = FaceDetectorOptions(performanceMode: FaceDetectorMode.accurate);
     faceDetector = FaceDetector(options: options);
+    //TODO initialize face recognizer
     recognizer = Recognizer();
+    //TODO initialize camera footage
     initializeCamera();
   }
 
+  //TODO code to initialize the camera feed
   initializeCamera() async {
     controller = CameraController(description, ResolutionPreset.medium,imageFormatGroup: Platform.isAndroid
     ? ImageFormatGroup.nv21 // for Android
@@ -91,10 +100,12 @@ class _MyHomePageState extends State<MyHomePage> {
     //TODO convert frame into InputImage format
     print('dfd');
     InputImage? inputImage = getInputImage();
+    //TODO pass InputImage to face detection model and detect faces
 
     List<Face> faces = await faceDetector.processImage(inputImage!);
 
     print("fl="+faces.length.toString());
+    //TODO perform face recognition on detected faces
     performFaceRecognition(faces);
     // setState(() {
     //   _scanResults = faces;
@@ -108,13 +119,16 @@ class _MyHomePageState extends State<MyHomePage> {
   performFaceRecognition(List<Face> faces) async {
     recognitions.clear();
 
+    //TODO convert CameraImage to Image and rotate it so that our frame will be in a portrait
     image = Platform.isIOS?_convertBGRA8888ToImage(frame!) as img.Image?:_convertNV21(frame!);
     image =img.copyRotate(image!, angle: camDirec == CameraLensDirection.front?270:90);
 
     for (Face face in faces) {
       Rect faceRect = face.boundingBox;
+      //TODO crop face
       img.Image croppedFace = img.copyCrop(image!, x:faceRect.left.toInt(),y:faceRect.top.toInt(),width:faceRect.width.toInt(),height:faceRect.height.toInt());
 
+      //TODO pass cropped face to face recognition model
       Recognition recognition = recognizer.recognize(croppedFace!, faceRect);
       if(recognition.distance>1.0){
         recognition.name = "Unknown";
@@ -160,7 +174,7 @@ class _MyHomePageState extends State<MyHomePage> {
               const SizedBox(height: 10,),
               ElevatedButton(
                   onPressed: () {
-                    recognizer.registeraceInDB(textEditingController.text, recognition.embeddings);
+                    recognizer.registerFaceInDB(textEditingController.text, recognition.embeddings);
                     textEditingController.text = "";
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
