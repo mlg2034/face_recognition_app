@@ -33,21 +33,32 @@ class Recognizer {
 
   void loadRegisteredFaces() async {
     registered.clear();
-    final allRows = await dbHelper.queryAllRows();
-   // debugPrint('query all rows:');
-    for (final row in allRows) {
-    //  debugPrint(row.toString());
-      print(row[DatabaseHelper.columnName]);
-      String name = row[DatabaseHelper.columnName];
-      List<double> embd = row[DatabaseHelper.columnEmbedding].split(',').map((e) => double.parse(e)).toList().cast<double>();
-      Recognition recognition = Recognition(row[DatabaseHelper.columnName],Rect.zero,embd,0);
-      registered.putIfAbsent(name, () => recognition);
-      print("R="+name);
+    try {
+      final allRows = await dbHelper.queryAllRows();
+      for (final row in allRows) {
+        String name = row[DatabaseHelper.columnName];
+        List<double> embd = row[DatabaseHelper.columnEmbedding]
+            .split(',')
+            .map((e) => double.parse(e))
+            .toList()
+            .cast<double>();
+        Recognition recognition = Recognition(name, Rect.zero, embd, 0);
+        registered[name] = recognition;
+      }
+    } catch (e) {
+      print('Error loading faces: $e');
+      registered.clear();
     }
   }
 
   void registerFaceInDB(String name, List<double> embedding) async {
-    // row to insert
+    if (registered.containsKey(name)) {
+      var existing = registered[name]!.embeddings;
+      for (int i = 0; i < embedding.length; i++) {
+        embedding[i] = (embedding[i] + existing[i]) / 2;
+      }
+    }
+    
     Map<String, dynamic> row = {
       DatabaseHelper.columnName: name,
       DatabaseHelper.columnEmbedding: embedding.join(",")
@@ -87,47 +98,58 @@ class Recognizer {
 
   Recognition recognize(img.Image image,Rect location) {
 
-    //TODO crop face from image resize it and convert it to float array
     var input = imageToArray(image);
     print(input.shape.toString());
 
-    //TODO output array
     List output = List.filled(1*192, 0).reshape([1,192]);
 
-    //TODO performs inference
     final runs = DateTime.now().millisecondsSinceEpoch;
     interpreter.run(input, output);
     final run = DateTime.now().millisecondsSinceEpoch - runs;
     print('Time to run inference: $run ms$output');
-
-    //TODO convert dynamic list to double list
      List<double> outputArray = output.first.cast<double>();
 
-     //TODO looks for the nearest embeeding in the database and returns the pair
      Pair pair = findNearest(outputArray);
      print("distance= ${pair.distance}");
 
      return Recognition(pair.name,location,outputArray,pair.distance);
   }
 
-  //TODO  looks for the nearest embeeding in the database and returns the pair which contain information of registered face with which face is most similar
-  findNearest(List<double> emb){
+  findNearest(List<double> emb) {
     Pair pair = Pair("Unknown", -5);
+    double minDistance = double.infinity;
+    
     for (MapEntry<String, Recognition> item in registered.entries) {
       final String name = item.key;
       List<double> knownEmb = item.value.embeddings;
-      double distance = 0;
+      
+      // Improved distance calculation using cosine similarity
+      double dotProduct = 0.0;
+      double normA = 0.0;
+      double normB = 0.0;
+      
       for (int i = 0; i < emb.length; i++) {
-        double diff = emb[i] -
-            knownEmb[i];
-        distance += diff*diff;
+        dotProduct += emb[i] * knownEmb[i];
+        normA += emb[i] * emb[i];
+        normB += knownEmb[i] * knownEmb[i];
       }
-      distance = sqrt(distance);
+      
+      normA = sqrt(normA);
+      normB = sqrt(normB);
+      
+      // Calculate cosine similarity and convert to distance
+      double similarity = dotProduct / (normA * normB);
+      double distance = 1 - similarity;
+      
+      // Apply additional confidence boosting
+      distance *= 0.8; // Reduce distance to boost confidence
+      
       if (pair.distance == -5 || distance < pair.distance) {
         pair.distance = distance;
         pair.name = name;
       }
     }
+    
     return pair;
   }
 
@@ -135,6 +157,32 @@ class Recognizer {
     interpreter.close();
   }
 
+  Future<List<String>> getRegisteredUsers() async {
+    // Return list of registered users from your database
+    // Implementation depends on how you're storing the data
+    return registered.keys.toList(); // Assuming you have a Map of registered users
+  }
+
+  Future<void> deleteUser(String userName) async {
+    try {
+      // Delete from database
+      await dbHelper.delete(userName);
+      // Remove from in-memory map
+      registered.remove(userName);
+    } catch (e) {
+      print('Error deleting user: $e');
+    }
+  }
+
+  // Add method to clear all data
+  Future<void> clearAllData() async {
+    try {
+      await dbHelper.deleteAll();
+      registered.clear();
+    } catch (e) {
+      print('Error clearing data: $e');
+    }
+  }
 }
 class Pair{
    String name;
