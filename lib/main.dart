@@ -1,4 +1,3 @@
-
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
@@ -49,30 +48,25 @@ class _MyHomePageState extends State<MyHomePage> {
   CameraLensDirection camDirec = CameraLensDirection.front;
   late List<Recognition> recognitions = [];
 
-  //TODO declare face detector
   late FaceDetector faceDetector;
 
-  //TODO declare face recognizer
   late Recognizer recognizer;
 
   @override
   void initState() {
     super.initState();
 
-    //TODO initialize face detector
+
     var options = FaceDetectorOptions(performanceMode: FaceDetectorMode.accurate);
     faceDetector = FaceDetector(options: options);
-    //TODO initialize face recognizer
     recognizer = Recognizer();
-    //TODO initialize camera footage
     initializeCamera();
   }
 
-  //TODO code to initialize the camera feed
   initializeCamera() async {
     controller = CameraController(description, ResolutionPreset.medium,imageFormatGroup: Platform.isAndroid
-    ? ImageFormatGroup.nv21 // for Android
-        : ImageFormatGroup.bgra8888,enableAudio: false); // for iOS);
+    ? ImageFormatGroup.nv21 
+        : ImageFormatGroup.bgra8888,enableAudio: false); 
     await controller.initialize().then((_) {
       if (!mounted) {
         return;
@@ -97,57 +91,53 @@ class _MyHomePageState extends State<MyHomePage> {
   dynamic _scanResults;
   CameraImage? frame;
   doFaceDetectionOnFrame() async {
-    //TODO convert frame into InputImage format
-    print('dfd');
     InputImage? inputImage = getInputImage();
-    //TODO pass InputImage to face detection model and detect faces
 
     List<Face> faces = await faceDetector.processImage(inputImage!);
 
     print("fl="+faces.length.toString());
-    //TODO perform face recognition on detected faces
     performFaceRecognition(faces);
-    // setState(() {
-    //   _scanResults = faces;
-    //   isBusy = false;
-    // });
+
   }
 
   img.Image? image;
   bool register = false;
- // TODO perform Face Recognition
   performFaceRecognition(List<Face> faces) async {
     recognitions.clear();
 
-    //TODO convert CameraImage to Image and rotate it so that our frame will be in a portrait
-    image = Platform.isIOS?_convertBGRA8888ToImage(frame!) as img.Image?:_convertNV21(frame!);
-    image =img.copyRotate(image!, angle: camDirec == CameraLensDirection.front?270:90);
+    image = Platform.isIOS ? _convertBGRA8888ToImage(frame!) as img.Image? : _convertNV21(frame!);
+    image = img.copyRotate(image!, angle: camDirec == CameraLensDirection.front ? 270 : 90);
 
     for (Face face in faces) {
+      if (!isFaceQualityGood(face)) {
+        continue;
+      }
       Rect faceRect = face.boundingBox;
-      //TODO crop face
       img.Image croppedFace = img.copyCrop(image!, x:faceRect.left.toInt(),y:faceRect.top.toInt(),width:faceRect.width.toInt(),height:faceRect.height.toInt());
 
-      //TODO pass cropped face to face recognition model
       Recognition recognition = recognizer.recognize(croppedFace!, faceRect);
-      if(recognition.distance>1.0){
+      
+      double confidence = (1 - recognition.distance * 0.5) * 100;
+      confidence = confidence.clamp(0, 100);
+      
+      if(recognition.distance > 0.7) { 
         recognition.name = "Unknown";
+      } else {
+        recognition.name = "${recognition.name} (${confidence.toStringAsFixed(1)}%)";
       }
+      
       recognitions.add(recognition);
 
-      //TODO show face registration dialogue
       if(register){
-        showFaceRegistrationDialogue(croppedFace!,recognition);
+        showFaceRegistrationDialogue(croppedFace,recognition);
         register = false;
       }
-
     }
 
     setState(() {
-      isBusy  = false;
+      isBusy = false;
       _scanResults = recognitions;
     });
-
   }
 
   //TODO Face Registration Dialogue
@@ -237,8 +227,7 @@ class _MyHomePageState extends State<MyHomePage> {
           b = 0;
         else if (b > 262143) b = 262143;
 
-        // I don't know how these r, g, b values are defined, I'm just copying what you had bellow and
-        // getting their 8-bit values.
+
         outImg.setPixelRgb(i, j, ((r << 6) & 0xff0000) >> 16,
             ((g >> 2) & 0xff00) >> 8, (b >> 10) & 0xff);
       }
@@ -375,6 +364,65 @@ class _MyHomePageState extends State<MyHomePage> {
     initializeCamera();
   }
 
+  // Add new method to show registered users and allow deletion
+  void showRegisteredUsers() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Registered Users", textAlign: TextAlign.center),
+        content: SizedBox(
+          width: 300,
+          child: FutureBuilder<List<String>>(
+            future: recognizer.getRegisteredUsers(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              
+              List<String> users = snapshot.data!;
+              return ListView.builder(
+                shrinkWrap: true,
+                itemCount: users.length,
+                itemBuilder: (context, index) {
+                  return ListTile(
+                    title: Text(users[index]),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () async {
+                        await recognizer.deleteUser(users[index]);
+                        Navigator.pop(context);
+                        showRegisteredUsers(); // Refresh the list
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text("${users[index]} deleted")),
+                        );
+                      },
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool isFaceQualityGood(Face face) {
+    // Check if face is frontal enough
+    if (face.headEulerAngleY != null && 
+        face.headEulerAngleZ != null) {
+      return face.headEulerAngleY!.abs() < 20 && 
+             face.headEulerAngleZ!.abs() < 20;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     List<Widget> stackChildren = [];
@@ -410,7 +458,6 @@ class _MyHomePageState extends State<MyHomePage> {
       );
     }
 
-    //TODO View for displaying the bar to switch camera direction or for registering faces
     stackChildren.add(Positioned(
       top: size.height - 140,
       left: 0,
@@ -439,8 +486,16 @@ class _MyHomePageState extends State<MyHomePage> {
                         _toggleCameraDirection();
                       },
                     ),
-                    Container(
-                      width: 30,
+                    IconButton(
+                      icon: const Icon(
+                        Icons.people,
+                        color: Colors.white,
+                      ),
+                      iconSize: 40,
+                      color: Colors.black,
+                      onPressed: () {
+                        showRegisteredUsers();
+                      },
                     ),
                     IconButton(
                       icon: const Icon(
@@ -512,7 +567,7 @@ class FaceDetectorPainter extends CustomPainter {
 
       TextSpan span = TextSpan(
           style: const TextStyle(color: Colors.white, fontSize: 20),
-          text: "${face.name}  ${face.distance.toStringAsFixed(2)}");
+          text: face.name);
       TextPainter tp = TextPainter(
           text: span,
           textAlign: TextAlign.left,
