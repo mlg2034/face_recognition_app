@@ -3,8 +3,8 @@ import 'dart:typed_data';
 import 'dart:ui';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
-import '../DB/DatabaseHelper.dart';
-import 'Recognition.dart';
+import '../core/app/database_helper.dart';
+import 'recognition.dart';
 
 class Recognizer {
   late Interpreter interpreter;
