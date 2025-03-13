@@ -9,6 +9,9 @@ import 'package:realtime_face_recognition/services/recognition.dart';
 import 'package:realtime_face_recognition/screens/face_registration_screen.dart';
 import 'package:realtime_face_recognition/screens/registered_users_screen.dart';
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
+import 'package:realtime_face_recognition/services/image_service.dart';
+import 'package:realtime_face_recognition/services/isolate_utils.dart';
+import 'package:realtime_face_recognition/services/emergency_image_converter.dart';
 
 import '../core/app/ui/ui.dart';
 
@@ -112,45 +115,70 @@ class _CameraWidgetState extends State<CameraWidget>
 
     await cameraService.stopImageStream();
 
-    img.Image? image = Platform.isIOS
-        ? img.Image.fromBytes(
-            width: frame!.width,
-            height: frame!.height,
-            bytes: frame!.planes[0].bytes.buffer,
-            rowStride: frame!.planes[0].bytesPerRow,
-            bytesOffset: 28,
-            order: img.ChannelOrder.bgra,
-          )
-        : img.Image.fromBytes(
-            width: frame!.width,
-            height: frame!.height,
-            bytes: frame!.planes[0].bytes.buffer,
-          );
+    img.Image? image;
+    try {
+      image = EmergencyImageConverter.convertToGrayscale(frame!);
+      
+      // Rotate image based on camera direction
+      image = img.copyRotate(image,
+          angle: cameraService.cameraLensDirection == CameraLensDirection.front
+              ? 270
+              : 90);
+              
+      if (recognition.location.left < 0 || 
+          recognition.location.top < 0 || 
+          recognition.location.right > image.width || 
+          recognition.location.bottom > image.height ||
+          recognition.location.width <= 0 || 
+          recognition.location.height <= 0) {
+        print('Warning: Invalid face crop rectangle');
+        // Create a dummy face instead
+        img.Image croppedFace = EmergencyImageConverter.createDummyFace(112, 112);
+        
+        if (!mounted) return;
+        
+        // Navigate to registration screen with dummy face
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FaceRegistrationScreen(
+              croppedFace: croppedFace,
+              recognition: recognition,
+              faceDetectionService: faceDetectionService,
+            ),
+          ),
+        );
+      } else {
+        // Safely crop the face
+        img.Image croppedFace = img.copyCrop(image,
+            x: recognition.location.left.toInt(),
+            y: recognition.location.top.toInt(),
+            width: recognition.location.width.toInt(),
+            height: recognition.location.height.toInt());
 
-    image = img.copyRotate(image,
-        angle: cameraService.cameraLensDirection == CameraLensDirection.front
-            ? 270
-            : 90);
+        if (!mounted) return;
 
-    img.Image croppedFace = img.copyCrop(image,
-        x: recognition.location.left.toInt(),
-        y: recognition.location.top.toInt(),
-        width: recognition.location.width.toInt(),
-        height: recognition.location.height.toInt());
-
-    if (!mounted) return;
-
-    // Navigate to registration screen
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => FaceRegistrationScreen(
-          croppedFace: croppedFace,
-          recognition: recognition,
-          faceDetectionService: faceDetectionService,
-        ),
-      ),
-    );
+        // Navigate to registration screen
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FaceRegistrationScreen(
+              croppedFace: croppedFace,
+              recognition: recognition,
+              faceDetectionService: faceDetectionService,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error in navigateToFaceRegistration: $e');
+      // Show error to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error processing face image. Please try again.'))
+        );
+      }
+    }
 
     // Resume camera stream
     if (mounted) {
@@ -202,6 +230,7 @@ class _CameraWidgetState extends State<CameraWidget>
     WidgetsBinding.instance.removeObserver(this);
     cameraService.dispose();
     faceDetectionService.dispose();
+    IsolateUtils.dispose();
     super.dispose();
   }
 

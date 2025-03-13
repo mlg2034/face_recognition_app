@@ -115,23 +115,32 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
     });
 
     try {
+      // Check if we have valid embeddings
+      if (widget.recognition.embeddings.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error: No valid face data available'))
+        );
+        return;
+      }
+      
+      // Register the face with error handling
       await widget.faceDetectionService.registerFace(
         textEditingController.text, 
         widget.recognition.embeddings
       );
       
-      if (mounted) {
-        Navigator.pop(context, true); // Return success
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Face Registered Successfully"))
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${textEditingController.text} registered successfully'))
+      );
+      
+      Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Registration failed: $e"))
-        );
-      }
+      print('Error registering face: $e');
+      final errorMsg = e.toString();
+      final truncatedMsg = errorMsg.length > 50 ? '${errorMsg.substring(0, 50)}...' : errorMsg;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error registering face: $truncatedMsg'))
+      );
     } finally {
       if (mounted) {
         setState(() {
