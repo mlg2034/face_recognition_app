@@ -13,11 +13,8 @@ class Recognizer {
   static const int HEIGHT = 112;
   final dbHelper = DatabaseHelper();
   Map<String,Recognition> registered = Map();
-  
-  // Threshold for face recognition - lower value means stricter matching
   static const double RECOGNITION_THRESHOLD = 0.55;
   
-  // Number of embeddings to average for each person
   static const int MAX_EMBEDDINGS_PER_PERSON = 5;
   
   @override
@@ -30,9 +27,7 @@ class Recognizer {
       _interpreterOptions.threads = numThreads;
     }
     
-    // Set additional options for better performance if needed
-    // Note: Some options might not be available in all versions of tflite_flutter
-    
+  
     loadModel();
     initDB();
   }
@@ -66,31 +61,24 @@ class Recognizer {
     if (registered.containsKey(name)) {
       var existing = registered[name]!.embeddings;
       
-      // Improved embedding averaging for better recognition
       List<double> averagedEmbedding = [];
       
-      // If we have existing embeddings, average them with the new one
       if (existing.isNotEmpty) {
-        // Normalize both embeddings before averaging
         List<double> normalizedNew = normalizeEmbedding(embedding);
         List<double> normalizedExisting = normalizeEmbedding(existing);
         
-        // Calculate weighted average (giving more weight to existing embeddings)
         for (int i = 0; i < normalizedNew.length; i++) {
           double weightedAvg = (normalizedExisting[i] * 0.7) + (normalizedNew[i] * 0.3);
           averagedEmbedding.add(weightedAvg);
         }
         
-        // Re-normalize the averaged embedding
         averagedEmbedding = normalizeEmbedding(averagedEmbedding);
       } else {
-        // If no existing embedding, just use the new one (normalized)
         averagedEmbedding = normalizeEmbedding(embedding);
       }
       
       embedding = averagedEmbedding;
     } else {
-      // For new faces, normalize the embedding
       embedding = normalizeEmbedding(embedding);
     }
     
@@ -103,16 +91,13 @@ class Recognizer {
     loadRegisteredFaces();
   }
 
-  // Helper method to normalize an embedding vector
   List<double> normalizeEmbedding(List<double> embedding) {
-    // Calculate the L2 norm (Euclidean length) of the embedding
     double sumSquares = 0.0;
     for (double val in embedding) {
       sumSquares += val * val;
     }
     double norm = sqrt(sumSquares);
     
-    // Normalize the embedding by dividing each element by the norm
     List<double> normalized = [];
     for (double val in embedding) {
       normalized.add(val / norm);
@@ -134,17 +119,13 @@ class Recognizer {
   }
 
   List<dynamic> imageToArray(img.Image inputImage){
-    // Resize image to model input size
     img.Image resizedImage = img.copyResize(inputImage, width: WIDTH, height: HEIGHT);
     
-    // Convert to float array with proper normalization
     List<double> flattenedList = [];
     
-    // Improved normalization for better model performance
     for (int y = 0; y < HEIGHT; y++) {
       for (int x = 0; x < WIDTH; x++) {
         final pixel = resizedImage.getPixel(x, y);
-        // Normalize to [-1, 1] range as expected by MobileFaceNet
         flattenedList.add((pixel.r / 127.5) - 1.0);
         flattenedList.add((pixel.g / 127.5) - 1.0);
         flattenedList.add((pixel.b / 127.5) - 1.0);
@@ -158,22 +139,17 @@ class Recognizer {
   Recognition recognize(img.Image image, Rect location) {
     var input = imageToArray(image);
     
-    // Prepare output tensor
     List output = List.filled(1*192, 0).reshape([1,192]);
 
-    // Run inference
     final runs = DateTime.now().millisecondsSinceEpoch;
     interpreter.run(input, output);
     final run = DateTime.now().millisecondsSinceEpoch - runs;
     print('Time to run inference: $run ms');
     
-    // Get output embedding
     List<double> outputArray = output.first.cast<double>();
     
-    // Normalize the output embedding for better matching
     outputArray = normalizeEmbedding(outputArray);
 
-    // Find the nearest match
     Pair pair = findNearest(outputArray);
     print("distance= ${pair.distance}");
 
@@ -188,7 +164,6 @@ class Recognizer {
       final String name = item.key;
       List<double> knownEmb = item.value.embeddings;
       
-      // Calculate cosine similarity
       double dotProduct = 0.0;
       double normA = 0.0;
       double normB = 0.0;
@@ -202,7 +177,6 @@ class Recognizer {
       normA = sqrt(normA);
       normB = sqrt(normB);
       
-      // Calculate cosine similarity and convert to distance
       double similarity = dotProduct / (normA * normB);
       double distance = 1 - similarity;
       
@@ -212,7 +186,6 @@ class Recognizer {
       }
     }
     
-    // Apply threshold for unknown faces
     if (pair.distance > RECOGNITION_THRESHOLD) {
       pair.name = "Unknown";
     }
@@ -225,22 +198,18 @@ class Recognizer {
   }
 
   Future<List<String>> getRegisteredUsers() async {
-    // Return list of registered users from your database
     return registered.keys.toList();
   }
 
   Future<void> deleteUser(String userName) async {
     try {
-      // Delete from database
       await dbHelper.delete(userName);
-      // Remove from in-memory map
       registered.remove(userName);
     } catch (e) {
       print('Error deleting user: $e');
     }
   }
 
-  // Add method to clear all data
   Future<void> clearAllData() async {
     try {
       await dbHelper.deleteAll();
