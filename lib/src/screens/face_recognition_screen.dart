@@ -1,8 +1,8 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:realtime_face_recognition/core/app/ui/app_fonts.dart';
 import 'package:realtime_face_recognition/ui/camera_widget.dart';
 
-import '../core/app/ui/ui.dart';
 
 class FaceRecognitionScreen extends StatelessWidget {
   final List<CameraDescription> cameras;
@@ -40,14 +40,14 @@ class FaceRecognitionScreen extends StatelessWidget {
                       style: AppFonts.w600s24,
                     ),
                   ),
-                  
+
                   const Spacer(),
-                  
+
                   // Registration button at the bottom if needed
                   // (This is optional since we already have a register button in the camera widget)
                   /*
                   ElevatedButton(
-                    onPressed: () {}, 
+                    onPressed: () {},
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),

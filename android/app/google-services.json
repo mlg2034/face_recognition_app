@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "214963952975",
+    "project_id": "face-recognition-diploma",
+    "storage_bucket": "face-recognition-diploma.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:214963952975:android:554c667878db15eb19793a",
+        "android_client_info": {
+          "package_name": "com.example.realtime_face_recognition"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBXcjKTt6BrcjVo7-yRQr_v9yMssrnetfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:realtime_face_recognition/services/face_detection_service.dart';
+import 'package:realtime_face_recognition/src/services/face_detection_service.dart';
 
 class RegisteredUsersScreen extends StatefulWidget {
   final FaceDetectionService faceDetectionService;

@@ -2,8 +2,8 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:image/image.dart' as img;
+import 'package:realtime_face_recognition/core/app/database_helper.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
-import '../core/app/database_helper.dart';
 import 'recognition.dart';
 
 class Recognizer {
