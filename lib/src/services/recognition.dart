@@ -5,7 +5,7 @@ class Recognition {
   Rect location;
   List<double> embeddings;
   double distance;
-  double qualityScore; // Face quality score (0-100)
+  double qualityScore;
   
   Recognition(
     this.name, 

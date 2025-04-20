@@ -16,7 +16,6 @@ class IsolateUtils {
     _isolate = await Isolate.spawn(_isolateEntryPoint, _receivePort!.sendPort);
     _sendPort = await _receivePort!.first;
     _initialized = true;
-    print('Isolate initialized successfully');
   }
   
   static void _isolateEntryPoint(SendPort sendPort) {
@@ -95,8 +94,7 @@ class IsolateUtils {
     }
     
     if (_sendPort == null) {
-      print('Isolate not initialized');
-      return null;
+      throw Exception('Isolates does not initialized');
     }
     
     try {
@@ -117,16 +115,15 @@ class IsolateUtils {
       _sendPort!.send(message);
       
       final result = await responsePort.first.timeout(
-        Duration(seconds: 2),
+         const Duration(seconds: 2),
         onTimeout: () {
-          print('Isolate processing timed out');
-          return null;
+       throw Exception('Isolate time out');
         }
       );
       
       return result as img.Image?;
     } catch (e) {
-      print('Error in processImageInIsolate: $e');
+       Exception('Error in processImageInIsolate: $e');
       return null;
     }
   }

@@ -5,36 +5,32 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
-import 'package:realtime_face_recognition/services/emergency_image_converter.dart';
-import 'package:realtime_face_recognition/services/face_detector_utils.dart';
-import 'package:realtime_face_recognition/services/image_service.dart';
-import 'package:realtime_face_recognition/services/recognition.dart';
-import 'package:realtime_face_recognition/services/recognizer.dart';
-import 'package:realtime_face_recognition/services/isolate_utils.dart';
+import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
+import 'package:realtime_face_recognition/src/services/face_detector_utils.dart';
+import 'package:realtime_face_recognition/src/services/image_service.dart';
+import 'package:realtime_face_recognition/src/services/recognition.dart';
+import 'package:realtime_face_recognition/src/services/recognizer.dart';
 
 class FaceDetectionService {
   late FaceDetector faceDetector;
   late Recognizer recognizer;
   
-  // Flag to track if we've encountered the buffer error
   bool _useEmergencyConverter = false;
   
   FaceDetectionService() {
-    // Use high accuracy mode with all features enabled for better detection
     var options = FaceDetectorOptions(
       performanceMode: FaceDetectorMode.accurate,
       enableLandmarks: true,
       enableContours: true,
       enableClassification: true,
       enableTracking: true,
-      minFaceSize: 0.15, // Increase minimum face size for better quality
+      minFaceSize: 0.15,
     );
     faceDetector = FaceDetector(options: options);
     recognizer = Recognizer();
   }
   
   Future<void> initialize() async {
-    // Initialize recognizer if needed
     await recognizer.initDB();
   }
   
@@ -66,17 +62,14 @@ class FaceDetectionService {
         }
       }
       
-      // Check if image is null after conversion
       if (image == null) {
         print('Image conversion returned null, using emergency converter');
         image = EmergencyImageConverter.convertToGrayscale(frame);
       }
       
-      // Rotate image based on camera direction
-      image = img.copyRotate(image!, 
+      image = img.copyRotate(image!,
           angle: cameraDirection == CameraLensDirection.front ? 270 : 90);
       
-      // Get image size for quality calculations
       Size imageSize = Size(image.width.toDouble(), image.height.toDouble());
       
       for (Face face in faces) {
@@ -124,10 +117,8 @@ class FaceDetectionService {
             croppedFace = EmergencyImageConverter.createDummyFace(112, 112);
           }
           
-          // Apply image enhancement
           img.Image enhancedFace = ImageService.enhanceImage(croppedFace);
           
-          // Recognize the face
           Recognition recognition = recognizer.recognize(enhancedFace, face.boundingBox);
           
           // Add quality score to recognition
@@ -215,12 +206,10 @@ class FaceDetectionService {
   }
 } 
 
-// Helper function to get max value
 double max(double a, double b) {
   return a > b ? a : b;
 }
 
-// Helper function to get min value
 double min(double a, double b) {
   return a < b ? a : b;
 } 
