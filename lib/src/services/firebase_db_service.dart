@@ -1,14 +1,14 @@
 import 'package:firebase_database/firebase_database.dart';
+import 'package:realtime_face_recognition/src/dto/create_user_dto.dart';
 import 'package:realtime_face_recognition/src/model/user_model.dart';
 
 class FirebaseDBService {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
   final String _usersPath = 'users';
 
-  Future<UserModel> addUser(UserModel user) async {
+  Future<void> addUser(CreateUserDTO createUserDto) async {
     try {
-      await _database.child(_usersPath).child(user.id).set(user.toData());
-      return user;
+      await _database.child(_usersPath).child(createUserDto.id.toString()).set(createUserDto.toData());
     } catch (e) {
       throw Exception('Failed to add user: $e');
     }

@@ -1,8 +1,8 @@
 class UserModel {
   final String name;
   final String id;
-  final DateTime entryTime;
-  final DateTime exitTime;
+  final DateTime? entryTime;
+  final DateTime? exitTime;
   final List<double> embeddings;
   final int deviceId;
 
