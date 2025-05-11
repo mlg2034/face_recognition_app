@@ -2,6 +2,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:realtime_face_recognition/core/app/ui/app_fonts.dart';
 import 'package:realtime_face_recognition/ui/camera_widget.dart';
+import 'package:realtime_face_recognition/src/screens/user_list_screen.dart';
 
 
 class FaceRecognitionScreen extends StatelessWidget {
@@ -67,6 +68,15 @@ class FaceRecognitionScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const UserListScreen()),
+          );
+        },
+        child: const Icon(Icons.people),
       ),
     );
   }

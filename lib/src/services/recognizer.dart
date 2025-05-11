@@ -2,8 +2,11 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:image/image.dart' as img;
-import 'package:realtime_face_recognition/core/app/database_helper.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:uuid/uuid.dart';
+import 'package:realtime_face_recognition/src/dto/create_user_dto.dart';
+import 'package:realtime_face_recognition/src/model/user_model.dart';
+import 'package:realtime_face_recognition/src/services/firebase_db_service.dart';
 import 'recognition.dart';
 
 class Recognizer {
@@ -11,8 +14,8 @@ class Recognizer {
   late InterpreterOptions _interpreterOptions;
   static const int WIDTH = 112;
   static const int HEIGHT = 112;
-  final dbHelper = DatabaseHelper();
-  Map<String,Recognition> registered = Map();
+  final FirebaseDBService _firebaseDBService = FirebaseDBService();
+  Map<String, Recognition> registered = Map();
   static const double RECOGNITION_THRESHOLD = 0.55;
   
   static const int MAX_EMBEDDINGS_PER_PERSON = 5;
@@ -27,29 +30,22 @@ class Recognizer {
       _interpreterOptions.threads = numThreads;
     }
     
-  
     loadModel();
-    initDB();
-  }
-
-  initDB() async {
-    await dbHelper.init();
     loadRegisteredFaces();
   }
 
-  void loadRegisteredFaces() async {
+  Future<void> loadRegisteredFaces() async {
     registered.clear();
     try {
-      final allRows = await dbHelper.queryAllRows();
-      for (final row in allRows) {
-        String name = row[DatabaseHelper.columnName];
-        List<double> embd = row[DatabaseHelper.columnEmbedding]
-            .split(',')
-            .map((e) => double.parse(e))
-            .toList()
-            .cast<double>();
-        Recognition recognition = Recognition(name, Rect.zero, embd, 0);
-        registered[name] = recognition;
+      final users = await _firebaseDBService.getAllUsers();
+      for (final user in users) {
+        Recognition recognition = Recognition(
+          user.name, 
+          Rect.zero, 
+          user.embeddings, 
+          0
+        );
+        registered[user.id] = recognition;
       }
     } catch (e) {
       print('Error loading faces: $e');
@@ -58,37 +54,24 @@ class Recognizer {
   }
 
   void registerFaceInDB(String name, List<double> embedding) async {
-    if (registered.containsKey(name)) {
-      var existing = registered[name]!.embeddings;
+    try {
+      List<double> finalEmbedding = normalizeEmbedding(embedding);
       
-      List<double> averagedEmbedding = [];
+      // Create user DTO
+      final createUserDto = CreateUserDTO(
+        name: name,
+        embeddings: finalEmbedding,
+      );
       
-      if (existing.isNotEmpty) {
-        List<double> normalizedNew = normalizeEmbedding(embedding);
-        List<double> normalizedExisting = normalizeEmbedding(existing);
-        
-        for (int i = 0; i < normalizedNew.length; i++) {
-          double weightedAvg = (normalizedExisting[i] * 0.7) + (normalizedNew[i] * 0.3);
-          averagedEmbedding.add(weightedAvg);
-        }
-        
-        averagedEmbedding = normalizeEmbedding(averagedEmbedding);
-      } else {
-        averagedEmbedding = normalizeEmbedding(embedding);
-      }
+      await _firebaseDBService.addUser(createUserDto);
       
-      embedding = averagedEmbedding;
-    } else {
-      embedding = normalizeEmbedding(embedding);
+      // Update local cache after adding to Firebase
+      await loadRegisteredFaces();
+      
+      print('User registered in Firebase: $name');
+    } catch (e) {
+      print('Error registering face in Firebase: $e');
     }
-    
-    Map<String, dynamic> row = {
-      DatabaseHelper.columnName: name,
-      DatabaseHelper.columnEmbedding: embedding.join(",")
-    };
-    final id = await dbHelper.insert(row);
-    print('inserted row id: $id');
-    loadRegisteredFaces();
   }
 
   List<double> normalizeEmbedding(List<double> embedding) {
@@ -160,7 +143,7 @@ class Recognizer {
     Pair pair = Pair("Unknown", -5);
 
     for (MapEntry<String, Recognition> item in registered.entries) {
-      final String name = item.key;
+      final String id = item.key;
       List<double> knownEmb = item.value.embeddings;
       
       double dotProduct = 0.0;
@@ -181,7 +164,7 @@ class Recognizer {
       
       if (pair.distance == -5 || distance < pair.distance) {
         pair.distance = distance;
-        pair.name = name;
+        pair.name = item.value.name; // Use the name from Recognition
       }
     }
     
@@ -197,13 +180,25 @@ class Recognizer {
   }
 
   Future<List<String>> getRegisteredUsers() async {
-    return registered.keys.toList();
+    await loadRegisteredFaces(); // Refresh from Firebase
+    return registered.values.map((recognition) => recognition.name).toList();
   }
 
   Future<void> deleteUser(String userName) async {
     try {
-      await dbHelper.delete(userName);
-      registered.remove(userName);
+      // Find user ID by name
+      String? userId;
+      for (var entry in registered.entries) {
+        if (entry.value.name == userName) {
+          userId = entry.key;
+          break;
+        }
+      }
+      
+      if (userId != null) {
+        await _firebaseDBService.deleteUser(userId);
+        registered.remove(userId);
+      }
     } catch (e) {
       print('Error deleting user: $e');
     }
@@ -211,7 +206,11 @@ class Recognizer {
 
   Future<void> clearAllData() async {
     try {
-      await dbHelper.deleteAll();
+      // Get all users and delete them one by one
+      final users = await _firebaseDBService.getAllUsers();
+      for (final user in users) {
+        await _firebaseDBService.deleteUser(user.id);
+      }
       registered.clear();
     } catch (e) {
       print('Error clearing data: $e');

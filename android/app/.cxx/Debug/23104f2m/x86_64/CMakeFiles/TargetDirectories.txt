@@ -1,0 +1,2 @@
+/Users/askhatkabtytaev/Desktop/face_recognition_app/android/app/.cxx/Debug/23104f2m/x86_64/CMakeFiles/edit_cache.dir
+/Users/askhatkabtytaev/Desktop/face_recognition_app/android/app/.cxx/Debug/23104f2m/x86_64/CMakeFiles/rebuild_cache.dir

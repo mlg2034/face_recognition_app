@@ -31,7 +31,7 @@ class FaceDetectionService {
   }
   
   Future<void> initialize() async {
-    await recognizer.initDB();
+    await recognizer.loadRegisteredFaces();
   }
   
   Future<List<Face>> detectFaces(InputImage inputImage) async {
