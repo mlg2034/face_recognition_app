@@ -1,6 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:realtime_face_recognition/services/recognition.dart';
+import 'package:realtime_face_recognition/src/services/recognition.dart';
 
 class FaceDetectorPainter extends CustomPainter {
   FaceDetectorPainter(this.absoluteImageSize, this.faces, this.cameraDirection);
@@ -15,7 +15,6 @@ class FaceDetectorPainter extends CustomPainter {
     final double scaleY = size.height / absoluteImageSize.height;
 
     for (Recognition face in faces) {
-      // Determine color based on recognition status or quality score
       Color boxColor;
       if (face.name.contains("Unknown")) {
         boxColor = Colors.red;
@@ -52,18 +51,15 @@ class FaceDetectorPainter extends CustomPainter {
         boxPaint,
       );
       
-      // Draw semi-transparent background for text
       final Paint textBackgroundPaint = Paint()
         ..style = PaintingStyle.fill
         ..color = Colors.black.withOpacity(0.5);
       
-      // Calculate text position
       final double textX = cameraDirection == CameraLensDirection.front
           ? (absoluteImageSize.width - face.location.right) * scaleX
           : face.location.left * scaleX;
       final double textY = face.location.top * scaleY - 30; // Position above face
       
-      // Prepare name text
       TextSpan nameSpan = TextSpan(
         style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         text: face.name
@@ -75,7 +71,6 @@ class FaceDetectorPainter extends CustomPainter {
       );
       namePainter.layout();
       
-      // Draw text background
       canvas.drawRect(
         Rect.fromLTWH(
           textX - 4, 
@@ -112,7 +107,6 @@ class FaceDetectorPainter extends CustomPainter {
         );
         qualityPainter.layout();
         
-        // Draw quality score below the name
         qualityPainter.paint(
           canvas, 
           Offset(textX, textY + namePainter.height + 2)
@@ -121,7 +115,6 @@ class FaceDetectorPainter extends CustomPainter {
     }
   }
   
-  // Helper method to get color based on quality score
   Color getQualityScoreColor(double score) {
     if (score >= 90) return Colors.green;
     if (score >= 70) return Colors.lightGreen;

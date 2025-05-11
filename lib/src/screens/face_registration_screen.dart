@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
-import 'package:realtime_face_recognition/services/face_detection_service.dart';
-import 'package:realtime_face_recognition/services/recognition.dart';
+import 'package:realtime_face_recognition/src/services/face_detection_service.dart';
+import 'package:realtime_face_recognition/src/services/recognition.dart';
 
 class FaceRegistrationScreen extends StatefulWidget {
   final img.Image croppedFace;

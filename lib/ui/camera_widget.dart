@@ -3,15 +3,15 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
-import 'package:realtime_face_recognition/services/camera_service.dart';
-import 'package:realtime_face_recognition/services/face_detection_service.dart';
-import 'package:realtime_face_recognition/services/recognition.dart';
-import 'package:realtime_face_recognition/screens/face_registration_screen.dart';
-import 'package:realtime_face_recognition/screens/registered_users_screen.dart';
+import 'package:realtime_face_recognition/src/services/camera_service.dart';
+import 'package:realtime_face_recognition/src/services/face_detection_service.dart';
+import 'package:realtime_face_recognition/src/services/recognition.dart';
+import 'package:realtime_face_recognition/src/screens/face_registration_screen.dart';
+import 'package:realtime_face_recognition/src/screens/registered_users_screen.dart';
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
-import 'package:realtime_face_recognition/services/image_service.dart';
-import 'package:realtime_face_recognition/services/isolate_utils.dart';
-import 'package:realtime_face_recognition/services/emergency_image_converter.dart';
+import 'package:realtime_face_recognition/src/services/image_service.dart';
+import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
+import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
 
 import '../core/app/ui/ui.dart';
 

@@ -14,7 +14,6 @@ class DatabaseHelper {
 
   late Database _db;
 
-  // this opens the database (and creates it if it doesn't exist)
   Future<void> init() async {
     final documentsDirectory = await getApplicationDocumentsDirectory();
     final path = join(documentsDirectory.path, _databaseName);
