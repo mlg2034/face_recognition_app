@@ -1,0 +1,1 @@
+/Users/askhatkabtytaev/Desktop/uni/face_recognition_app/build/app/intermediates/cxx/Debug/156j3v2v/obj/arm64-v8a

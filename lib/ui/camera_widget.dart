@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
@@ -210,7 +211,7 @@ class _CameraWidgetState extends State<CameraWidget>
         cameraService.controller == null ||
         !cameraService.controller!.value.isInitialized) {
       return const Center(
-          child: Text('Camera is not initialized', style: AppFonts.w500s20));
+          child: CupertinoActivityIndicator());
     }
 
     final Size imageSize = Size(
@@ -308,11 +309,13 @@ class _CameraWidgetState extends State<CameraWidget>
                     }
                   },
                 ),
-                _buildControlButton(
-                  icon: Icons.people,
-                  label: "Users",
-                  onPressed: navigateToRegisteredUsers,
-                ),
+                //TODO registered user buttons
+
+                // _buildControlButton(
+                //   icon: Icons.people,
+                //   label: "Users",
+                //   onPressed: navigateToRegisteredUsers,
+                // ),
                 _buildControlButton(
                   icon: Icons.face_retouching_natural,
                   label: "Register",

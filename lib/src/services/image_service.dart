@@ -164,7 +164,6 @@ class ImageService {
         for (int x = 0; x < image.width; x++) {
           final int pixelIndex = IOS_BYTES_OFFSET + y * plane.bytesPerRow + x * 4;
           
-          // Check bounds before accessing
           if (pixelIndex + 3 >= plane.bytes.length) continue;
           
           final int b = plane.bytes[pixelIndex] & 0xFF;
@@ -182,16 +181,13 @@ class ImageService {
     }
   }
   
-  // Public methods that use the isolate-based processing
   static Future<img.Image?> convertNV21(CameraImage image) async {
     try {
-      // First try with isolate
       if (_isolateReady) {
         final result = await processImageWithIsolate(image, true);
         if (result != null) return result;
       }
       
-      // Fall back to synchronous method if isolate fails
       return convertNV21Sync(image);
     } catch (e) {
       print('Error in convertNV21: $e');
