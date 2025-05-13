@@ -44,6 +44,7 @@ dependencies:
   flutter_bloc: ^9.0.0
   firebase_core: ^3.13.0
   firebase_database: ^11.3.5
+  bloc: ^9.0.0
 
 dev_dependencies:
   flutter_test:

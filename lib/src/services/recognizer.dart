@@ -158,8 +158,7 @@ class Recognizer {
 
   findNearest(List<double> emb) {
     Pair pair = Pair("Unknown", -5);
-    double minDistance = double.infinity;
-    
+
     for (MapEntry<String, Recognition> item in registered.entries) {
       final String name = item.key;
       List<double> knownEmb = item.value.embeddings;
