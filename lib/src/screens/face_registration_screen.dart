@@ -123,7 +123,6 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
         return;
       }
       
-      // Register the face with error handling
       await widget.faceDetectionService.registerFace(
         textEditingController.text, 
         widget.recognition.embeddings

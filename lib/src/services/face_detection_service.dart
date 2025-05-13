@@ -78,18 +78,17 @@ class FaceDetectionService {
           double qualityScore = FaceDetectorUtils.calculateFaceQualityScore(face, imageSize);
           
           // Apply stricter face quality checks using the utility class
-          if (!FaceDetectorUtils.isFaceSuitableForRecognition(face, imageSize)) {
-            // Add a recognition with guidance message for feedback
-            String guidanceMessage = FaceDetectorUtils.getFaceAlignmentGuidance(face);
-            recognitions.add(Recognition(
-              guidanceMessage, 
-              face.boundingBox, 
-              [], 
-              1.0,
-              qualityScore: qualityScore
-            ));
-            continue;
-          }
+          // if (!FaceDetectorUtils.isFaceSuitableForRecognition(face, imageSize)) {
+          //   String guidanceMessage = FaceDetectorUtils.getFaceAlignmentGuidance(face);
+          //   recognitions.add(Recognition(
+          //     guidanceMessage,
+          //     face.boundingBox,
+          //     [],
+          //     1.0,
+          //     qualityScore: qualityScore
+          //   ));
+          //   continue;
+          // }
           
           // Get expanded face rectangle with padding using utility
           Rect paddedRect = FaceDetectorUtils.getExpandedFaceRect(face, imageSize);
@@ -150,21 +149,15 @@ class FaceDetectionService {
   }
   
   bool isFaceQualityGood(Face face) {
-    // More comprehensive face quality check
-    
-    // Check if face landmarks are detected
+
     bool hasLandmarks = face.landmarks.isNotEmpty;
     
-    // Check face angles (roll, pitch, yaw)
     bool goodAngles = true;
     if (face.headEulerAngleY != null && face.headEulerAngleZ != null && face.headEulerAngleX != null) {
-      // Check for yaw (left-right rotation)
       bool goodYaw = face.headEulerAngleY!.abs() < 15;
       
-      // Check for roll (tilt)
       bool goodRoll = face.headEulerAngleZ!.abs() < 15;
       
-      // Check for pitch (up-down rotation)
       bool goodPitch = face.headEulerAngleX!.abs() < 15;
       
       goodAngles = goodYaw && goodRoll && goodPitch;

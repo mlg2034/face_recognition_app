@@ -1,3 +1,4 @@
+
 class UserModel {
   final String name;
   final String id;
@@ -33,3 +34,4 @@ class UserModel {
         'embeddings': embeddings
       };
 }
+
