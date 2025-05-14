@@ -22,7 +22,7 @@ class FaceRecognitionScreen extends StatelessWidget {
             child: CameraWidget(cameras: cameras),
           ),
           
-          // Overlay with title and registration button
+          // Overlay with title and information
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
@@ -37,32 +37,28 @@ class FaceRecognitionScreen extends StatelessWidget {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text(
-                      'Пройдите биометрию', 
+                      'Биометрия с проверкой живости', 
                       style: AppFonts.w600s24,
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 12),
+                  
+                  // Instructions container
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Для регистрации нажмите "Регистрация" и пройдите проверку живости', 
+                      style: AppFonts.w400s16,
+                      textAlign: TextAlign.center,
                     ),
                   ),
 
                   const Spacer(),
-
-                  // Registration button at the bottom if needed
-                  // (This is optional since we already have a register button in the camera widget)
-                  /*
-                  ElevatedButton(
-                    onPressed: () {},
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                    ),
-                    child: const Text(
-                      'Registration',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  */
                 ],
               ),
             ),
@@ -76,6 +72,7 @@ class FaceRecognitionScreen extends StatelessWidget {
             MaterialPageRoute(builder: (context) => const UserListScreen()),
           );
         },
+        tooltip: 'Список пользователей',
         child: const Icon(Icons.people),
       ),
     );

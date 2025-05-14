@@ -46,6 +46,7 @@ dependencies:
   firebase_database: ^11.3.5
   bloc: ^9.0.0
   uuid: ^4.5.1
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:

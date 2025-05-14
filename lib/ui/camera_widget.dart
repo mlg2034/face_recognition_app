@@ -5,10 +5,13 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:realtime_face_recognition/src/services/camera_service.dart';
 import 'package:realtime_face_recognition/src/services/face_detection_service.dart';
+import 'package:realtime_face_recognition/src/services/liveness_detection_service.dart';
+import 'package:realtime_face_recognition/src/services/liveness_settings_service.dart';
 import 'package:realtime_face_recognition/src/services/recognition.dart';
 import 'package:realtime_face_recognition/src/screens/face_registration_screen.dart';
 import 'package:realtime_face_recognition/src/screens/registered_users_screen.dart';
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
+import 'package:realtime_face_recognition/ui/liveness_check_widget.dart';
 import 'package:realtime_face_recognition/src/services/image_service.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
@@ -28,11 +31,15 @@ class _CameraWidgetState extends State<CameraWidget>
     with WidgetsBindingObserver {
   late CameraService cameraService;
   late FaceDetectionService faceDetectionService;
+  late LivenessDetectionService livenessDetectionService;
 
   bool isBusy = false;
   late Size size;
   CameraImage? frame;
   bool register = false;
+  bool showLivenessCheck = false;
+  bool livenessCheckRequired = true;
+  bool livenessVerified = false;
   List<Recognition> recognitions = [];
 
   @override
@@ -41,8 +48,18 @@ class _CameraWidgetState extends State<CameraWidget>
     WidgetsBinding.instance.addObserver(this);
     cameraService = CameraService();
     faceDetectionService = FaceDetectionService();
+    livenessDetectionService = LivenessDetectionService();
 
+    _loadLivenessSettings();
     initializeServices();
+  }
+
+  Future<void> _loadLivenessSettings() async {
+    final required = await LivenessSettingsService.isLivenessCheckRequired();
+    setState(() {
+      livenessCheckRequired = required;
+      livenessVerified = !required;
+    });
   }
 
   @override
@@ -56,6 +73,7 @@ class _CameraWidgetState extends State<CameraWidget>
       cameraService.dispose();
     } else if (state == AppLifecycleState.resumed) {
       initializeServices();
+      _loadLivenessSettings();
     }
   }
 
@@ -94,6 +112,19 @@ class _CameraWidgetState extends State<CameraWidget>
 
     List<Face> faces = await faceDetectionService.detectFaces(inputImage);
 
+    // Process liveness check if active
+    if (showLivenessCheck && 
+        livenessDetectionService.state == LivenessState.inProgress) {
+      bool livenessCompleted = livenessDetectionService.processFrame(faces);
+      if (livenessCompleted) {
+        setState(() {
+          livenessVerified = true;
+        });
+        // Сохраняем успешное прохождение проверки
+        await LivenessSettingsService.setLivenessCheckPassed();
+      }
+    }
+
     List<Recognition> results = await faceDetectionService.processRecognitions(
         faces, frame!, cameraService.cameraLensDirection);
 
@@ -103,11 +134,27 @@ class _CameraWidgetState extends State<CameraWidget>
         isBusy = false;
       });
 
-      if (register && results.isNotEmpty) {
+      if (register && results.isNotEmpty && (!livenessCheckRequired || livenessVerified)) {
         navigateToFaceRegistration(results.first);
         register = false;
       }
     }
+  }
+
+  void startLivenessCheck() {
+    setState(() {
+      showLivenessCheck = true;
+      livenessVerified = false;
+    });
+    livenessDetectionService.start();
+  }
+
+  void cancelLivenessCheck() {
+    setState(() {
+      showLivenessCheck = false;
+    });
+    livenessDetectionService.reset();
+    _loadLivenessSettings(); // Перезагружаем настройки
   }
 
   void navigateToFaceRegistration(Recognition recognition) async {
@@ -180,6 +227,13 @@ class _CameraWidgetState extends State<CameraWidget>
       }
     }
 
+    // Reset liveness state
+    setState(() {
+      showLivenessCheck = false;
+      livenessVerified = false;
+    });
+    livenessDetectionService.reset();
+
     // Resume camera stream
     if (mounted) {
       startImageStream();
@@ -230,6 +284,7 @@ class _CameraWidgetState extends State<CameraWidget>
     WidgetsBinding.instance.removeObserver(this);
     cameraService.dispose();
     faceDetectionService.dispose();
+    livenessDetectionService.dispose();
     IsolateUtils.dispose();
     super.dispose();
   }
@@ -289,7 +344,49 @@ class _CameraWidgetState extends State<CameraWidget>
             child: buildResult(),
           ),
           
-          // Add control buttons if needed
+          // Liveness check overlay
+          if (showLivenessCheck)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 20,
+              left: 20,
+              right: 20,
+              child: LivenessCheckWidget(
+                livenessService: livenessDetectionService,
+                onStart: () {
+                  startLivenessCheck();
+                },
+                onCancel: () {
+                  cancelLivenessCheck();
+                },
+              ),
+            ),
+          
+          // Liveness verified indicator
+          if (livenessVerified)
+            Positioned(
+              top: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.check_circle, color: Colors.white, size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'Живость подтверждена',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          
+          // Add control buttons
           Positioned(
             bottom: 20,
             left: 0,
@@ -299,7 +396,7 @@ class _CameraWidgetState extends State<CameraWidget>
               children: [
                 _buildControlButton(
                   icon: Icons.cached,
-                  label: "Switch",
+                  label: "Переключить",
                   onPressed: () async {
                     await cameraService.toggleCameraDirection(widget.cameras);
                     if (mounted) {
@@ -310,16 +407,34 @@ class _CameraWidgetState extends State<CameraWidget>
                 ),
                 _buildControlButton(
                   icon: Icons.people,
-                  label: "Users",
+                  label: "Пользователи",
                   onPressed: navigateToRegisteredUsers,
                 ),
                 _buildControlButton(
                   icon: Icons.face_retouching_natural,
-                  label: "Register",
+                  label: "Регистрация",
+                  onPressed: () {
+                    // Если требуется проверка живости и она еще не пройдена
+                    if (livenessCheckRequired && !livenessVerified) {
+                      setState(() {
+                        showLivenessCheck = true;
+                      });
+                    } else {
+                      setState(() {
+                        register = true;
+                      });
+                    }
+                  },
+                ),
+                _buildControlButton(
+                  icon: Icons.security,
+                  label: "Проверка",
                   onPressed: () {
                     setState(() {
-                      register = true;
+                      showLivenessCheck = true;
+                      livenessVerified = false;
                     });
+                    livenessDetectionService.reset();
                   },
                 ),
               ],

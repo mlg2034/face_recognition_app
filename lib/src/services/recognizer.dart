@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'package:realtime_face_recognition/src/dto/create_user_dto.dart';
 import 'package:realtime_face_recognition/src/model/user_model.dart';
 import 'package:realtime_face_recognition/src/services/firebase_db_service.dart';
+import 'package:realtime_face_recognition/core/app/database_helper.dart';
 import 'recognition.dart';
 
 class Recognizer {
@@ -15,6 +16,7 @@ class Recognizer {
   static const int WIDTH = 112;
   static const int HEIGHT = 112;
   final FirebaseDBService _firebaseDBService = FirebaseDBService();
+  final DatabaseHelper dbHelper = DatabaseHelper();
   Map<String, Recognition> registered = Map();
   static const double RECOGNITION_THRESHOLD = 0.55;
   
@@ -31,12 +33,34 @@ class Recognizer {
     }
     
     loadModel();
+    _initializeDbHelper();
     loadRegisteredFaces();
+  }
+
+  Future<void> _initializeDbHelper() async {
+    await dbHelper.init();
   }
 
   Future<void> loadRegisteredFaces() async {
     registered.clear();
     try {
+      // Load from local database
+      final localRows = await dbHelper.queryAllRows();
+      for (var row in localRows) {
+        final String name = row[DatabaseHelper.columnName];
+        final String embeddingStr = row[DatabaseHelper.columnEmbedding];
+        final List<double> embeddings = embeddingStr.split(',').map((e) => double.parse(e)).toList();
+        
+        Recognition recognition = Recognition(
+          name,
+          Rect.zero,
+          embeddings,
+          0
+        );
+        registered[name] = recognition;
+      }
+      
+      // Also refresh from Firebase
       final users = await _firebaseDBService.getAllUsers();
       for (final user in users) {
         Recognition recognition = Recognition(
@@ -55,22 +79,54 @@ class Recognizer {
 
   void registerFaceInDB(String name, List<double> embedding) async {
     try {
-      List<double> finalEmbedding = normalizeEmbedding(embedding);
+      // Process embedding for local DB
+      List<double> processedEmbedding;
+      if (registered.containsKey(name)) {
+        var existing = registered[name]!.embeddings;
+        
+        List<double> averagedEmbedding = [];
+        
+        if (existing.isNotEmpty) {
+          List<double> normalizedNew = normalizeEmbedding(embedding);
+          List<double> normalizedExisting = normalizeEmbedding(existing);
+          
+          for (int i = 0; i < normalizedNew.length; i++) {
+            double weightedAvg = (normalizedExisting[i] * 0.7) + (normalizedNew[i] * 0.3);
+            averagedEmbedding.add(weightedAvg);
+          }
+          
+          averagedEmbedding = normalizeEmbedding(averagedEmbedding);
+        } else {
+          averagedEmbedding = normalizeEmbedding(embedding);
+        }
+        
+        processedEmbedding = averagedEmbedding;
+      } else {
+        processedEmbedding = normalizeEmbedding(embedding);
+      }
       
-      // Create user DTO
+      // Save to local SQLite database
+      Map<String, dynamic> row = {
+        DatabaseHelper.columnName: name,
+        DatabaseHelper.columnEmbedding: processedEmbedding.join(",")
+      };
+      final localId = await dbHelper.insert(row);
+      print('Inserted row id in local DB: $localId');
+      
+      // Create user DTO for Firebase
       final createUserDto = CreateUserDTO(
         name: name,
-        embeddings: finalEmbedding,
+        embeddings: processedEmbedding,
       );
       
+      // Save to Firebase
       await _firebaseDBService.addUser(createUserDto);
+      print('User registered in Firebase with ID: ${createUserDto.id}');
       
-      // Update local cache after adding to Firebase
+      // Update local cache
       await loadRegisteredFaces();
-      
-      print('User registered in Firebase: $name');
     } catch (e) {
-      print('Error registering face in Firebase: $e');
+      print('Error registering face: $e');
     }
   }
 
