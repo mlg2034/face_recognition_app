@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +9,6 @@ import 'package:realtime_face_recognition/src/services/recognition.dart';
 import 'package:realtime_face_recognition/src/screens/face_registration_screen.dart';
 import 'package:realtime_face_recognition/src/screens/registered_users_screen.dart';
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
-import 'package:realtime_face_recognition/src/services/image_service.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
 
@@ -55,7 +53,6 @@ class _CameraWidgetState extends State<CameraWidget>
     // Handle app lifecycle changes
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       // Make sure to properly clean up camera resources when app goes background
-      safeDisposeCameraResources();
     } else if (state == AppLifecycleState.resumed) {
       // Reinitialize camera when app comes back to foreground
       initializeServices();
@@ -67,7 +64,6 @@ class _CameraWidgetState extends State<CameraWidget>
       if (cameraService.controller != null) {
         await cameraService.stopImageStream();
         await Future.delayed(const Duration(milliseconds: 200)); // Give time for stream to stop
-        cameraService.dispose(); // This doesn't return a Future
       }
     } catch (e) {
       print('Error safely disposing camera: $e');
@@ -202,26 +198,57 @@ class _CameraWidgetState extends State<CameraWidget>
           ),
         );
       } else {
-        // Safely crop the face
-        img.Image croppedFace = img.copyCrop(image,
-            x: recognition.location.left.toInt(),
-            y: recognition.location.top.toInt(),
-            width: recognition.location.width.toInt(),
-            height: recognition.location.height.toInt());
+        // Just crop the face region directly
+        try {
+          img.Image croppedFace = img.copyCrop(
+            image, 
+            x: recognition.location.left.round(), 
+            y: recognition.location.top.round(),
+            width: recognition.location.width.round(),
+            height: recognition.location.height.round()
+          );
+          
+          // Resize to model requirements (112x112 is required by MobileFaceNet)
+          croppedFace = img.copyResize(
+            croppedFace,
+            width: 112,
+            height: 112,
+            interpolation: img.Interpolation.cubic
+          );
 
-        if (!mounted) return;
+          print('Prepared face image for registration: ${croppedFace.width}x${croppedFace.height}');
 
-        // Navigate to registration screen
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => FaceRegistrationScreen(
-              croppedFace: croppedFace,
-              recognition: recognition,
-              faceDetectionService: faceDetectionService,
+          if (!mounted) return;
+
+          // Navigate to registration screen
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => FaceRegistrationScreen(
+                croppedFace: croppedFace,
+                recognition: recognition,
+                faceDetectionService: faceDetectionService,
+              ),
             ),
-          ),
-        );
+          );
+        } catch (e) {
+          print('Error cropping face: $e');
+          // Create a dummy face as fallback
+          img.Image dummyFace = EmergencyImageConverter.createDummyFace(112, 112);
+          
+          if (!mounted) return;
+          
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => FaceRegistrationScreen(
+                croppedFace: dummyFace,
+                recognition: recognition,
+                faceDetectionService: faceDetectionService,
+              ),
+            ),
+          );
+        }
       }
     } catch (e) {
       print('Error in navigateToFaceRegistration: $e');
@@ -277,15 +304,15 @@ class _CameraWidgetState extends State<CameraWidget>
       size: Size(size.width, size.height),
     );
   }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    safeDisposeCameraResources(); // Don't await this
-    faceDetectionService.dispose();
-    IsolateUtils.dispose();
-    super.dispose();
-  }
+  //
+  // @override
+  // void dispose() {
+  //   WidgetsBinding.instance.removeObserver(this);
+  //   safeDisposeCameraResources(); // Don't await this
+  //   faceDetectionService.dispose();
+  //   IsolateUtils.dispose();
+  //   super.dispose();
+  // }
 
   @override
   Widget build(BuildContext context) {

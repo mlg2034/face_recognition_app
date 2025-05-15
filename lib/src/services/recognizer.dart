@@ -255,8 +255,32 @@ class Recognizer {
         modelName,
         options: _interpreterOptions,
       );
+      
+      // Check and print the expected input shape
+      var inputTensor = interpreter.getInputTensor(0);
+      var outputTensor = interpreter.getOutputTensor(0);
+      
+      print('Model loaded successfully.');
+      print('Input shape: ${inputTensor.shape}');
+      print('Output shape: ${outputTensor.shape}');
+      
+      // Reshape input and output tensors if needed
+      if (inputTensor.shape.length != 4) {
+        try {
+          // Attempt to reshape the input tensor to [1, HEIGHT, WIDTH, 3]
+          interpreter.resizeInputTensor(0, [1, HEIGHT, WIDTH, 3]);
+          print('Input tensor reshaped to [1, HEIGHT, WIDTH, 3]');
+          
+          // Allocate tensors after reshaping
+          interpreter.allocateTensors();
+        } catch (e) {
+          print('Failed to reshape input tensor: $e');
+        }
+      }
+      
       _modelLoaded = true;
     } catch (e) {
+      print('Error loading model: $e');
       _modelLoaded = false;
     }
   }
@@ -264,17 +288,25 @@ class Recognizer {
   List<dynamic> imageToArray(img.Image inputImage) {
     img.Image resizedImage = img.copyResize(inputImage, width: WIDTH, height: HEIGHT);
     
+    // Create a 4D tensor with shape [1, HEIGHT, WIDTH, 3]
+    var inputShape = [1, HEIGHT, WIDTH, 3];
+    var reshapedInput = Float32List(1 * HEIGHT * WIDTH * 3);
+    
     int pixelIndex = 0;
     for (int y = 0; y < HEIGHT; y++) {
       for (int x = 0; x < WIDTH; x++) {
         final pixel = resizedImage.getPixel(x, y);
-        _inputBuffer[pixelIndex++] = (pixel.r / 127.5) - 1.0;
-        _inputBuffer[pixelIndex++] = (pixel.g / 127.5) - 1.0;
-        _inputBuffer[pixelIndex++] = (pixel.b / 127.5) - 1.0;
+        reshapedInput[pixelIndex++] = (pixel.r / 127.5) - 1.0;
+        reshapedInput[pixelIndex++] = (pixel.g / 127.5) - 1.0;
+        reshapedInput[pixelIndex++] = (pixel.b / 127.5) - 1.0;
       }
     }
     
-    return [_inputBuffer.buffer.asFloat32List(0, 1 * HEIGHT * WIDTH * 3)];
+    // Store in _inputBuffer for later reuse
+    _inputBuffer = reshapedInput;
+    
+    // Return a list containing a single tensor with shape [1, HEIGHT, WIDTH, 3]
+    return [reshapedInput];
   }
 
   Recognition recognize(img.Image image, Rect location) {
@@ -282,16 +314,67 @@ class Recognizer {
       return Recognition("Model not loaded", location, [], 1.0);
     }
     
-    var input = imageToArray(image);
-    var output = [_outputBuffer.buffer.asFloat32List(0, 1 * 192)];
-
-    interpreter.run(input, output);
-    
-    List<double> outputArray = output[0].toList();
-    outputArray = normalizeEmbedding(outputArray);
-
-    Pair pair = findNearest(outputArray);
-    return Recognition(pair.name, location, outputArray, pair.distance);
+    try {
+      // Ensure image is the right size
+      if (image.width != WIDTH || image.height != HEIGHT) {
+        image = img.copyResize(image, width: WIDTH, height: HEIGHT);
+      }
+      
+      // Create input tensor with proper shape [1, HEIGHT, WIDTH, 3]
+      Float32List inputBuffer = Float32List(1 * HEIGHT * WIDTH * 3);
+      
+      int pixelIndex = 0;
+      for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+          final pixel = image.getPixel(x, y);
+          inputBuffer[pixelIndex++] = (pixel.r / 127.5) - 1.0;
+          inputBuffer[pixelIndex++] = (pixel.g / 127.5) - 1.0;
+          inputBuffer[pixelIndex++] = (pixel.b / 127.5) - 1.0;
+        }
+      }
+      
+      // Create output buffer
+      Float32List outputBuffer = Float32List(1 * 192);
+      
+      // Run inference with properly shaped inputs
+      try {
+        // Reshape input tensor to [1, HEIGHT, WIDTH, 3]
+        var inputTensor = interpreter.getInputTensor(0);
+        print('Original input shape: ${inputTensor.shape}');
+        
+        // Try reshaping if needed
+        if (inputTensor.shape.length != 4) {
+          try {
+            interpreter.resizeInputTensor(0, [1, HEIGHT, WIDTH, 3]);
+            interpreter.allocateTensors();
+            print('Reshaped input tensor to [1, HEIGHT, WIDTH, 3]');
+          } catch (e) {
+            print('Failed to reshape tensor: $e');
+          }
+        }
+        
+        interpreter.run(inputBuffer, outputBuffer);
+      } catch (e) {
+        print('TFLite error: $e');
+        return Recognition("TFLite Error", location, [], 1.0);
+      }
+      
+      // Process the output
+      List<double> embeddingsList = [];
+      for (int i = 0; i < 192; i++) {
+        embeddingsList.add(outputBuffer[i]);
+      }
+      
+      // Normalize the embeddings
+      embeddingsList = normalizeEmbedding(embeddingsList);
+      
+      // Find the nearest match
+      Pair pair = findNearest(embeddingsList);
+      return Recognition(pair.name, location, embeddingsList, pair.distance);
+    } catch (e) {
+      print('Error in recognition process: $e');
+      return Recognition("Recognition error", location, [], 1.0);
+    }
   }
 
   Pair findNearest(List<double> emb) {

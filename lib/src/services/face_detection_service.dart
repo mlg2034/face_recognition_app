@@ -195,50 +195,71 @@ class FaceDetectionService {
             width: paddedRect.width.toInt(),
             height: paddedRect.height.toInt()
           );
+          
+          // Ensure the face image has the right format and dimensions for the model
+          // Resize to exact dimensions required by the model
+          croppedFace = img.copyResize(
+            croppedFace,
+            width: 112,
+            height: 112,
+            interpolation: img.Interpolation.cubic
+          );
+          
+          // Debug
+          print('Prepared face image: ${croppedFace.width}x${croppedFace.height}');
+          
         } catch (e) {
           print('Ошибка обрезки лица: $e');
           continue;
         }
         
         // Process recognition
-        Recognition recognition = recognizer.recognize(croppedFace, face.boundingBox);
-        
-        // Calculate quality score based on face attributes
-        double qualityScore = 0;
-        if (face.headEulerAngleY != null && face.headEulerAngleZ != null) {
-          // Better score for frontal faces
-          double angleYawPenalty = (face.headEulerAngleY!.abs() / 36.0) * 30; // Up to 30% penalty
-          double angleRollPenalty = (face.headEulerAngleZ!.abs() / 36.0) * 20; // Up to 20% penalty
-          qualityScore = 100 - angleYawPenalty - angleRollPenalty;
-          qualityScore = qualityScore.clamp(0, 100);
-        }
-        recognition.qualityScore = qualityScore;
-        
-        // Add confidence level
-        double confidence = (1 - recognition.distance) * 100;
-        confidence = confidence.clamp(0, 100);
-        
-        // Debug output
-        print('Recognition result: name=${recognition.name}, distance=${recognition.distance.toStringAsFixed(3)}, confidence=${confidence.toStringAsFixed(1)}%');
-        
-        // Only identify faces with good confidence
-        if (recognition.name != "Unknown" && confidence > 65) { // Increased threshold for better accuracy
-          recognition.name = "${recognition.name.split(' ')[0]} (${confidence.toStringAsFixed(0)}%)"; // Only show name without previous confidence
+        try {
+          Recognition recognition = recognizer.recognize(croppedFace, face.boundingBox);
           
-          // Cache this face for future frames only if it's high confidence
-          if (confidence > 80) { // Increased threshold for caching
-            _lastKnownFace = recognition;
-            _framesSinceLastRecognition = 0;
+          // Calculate quality score based on face attributes
+          double qualityScore = 0;
+          if (face.headEulerAngleY != null && face.headEulerAngleZ != null) {
+            // Better score for frontal faces
+            double angleYawPenalty = (face.headEulerAngleY!.abs() / 36.0) * 30; // Up to 30% penalty
+            double angleRollPenalty = (face.headEulerAngleZ!.abs() / 36.0) * 20; // Up to 20% penalty
+            qualityScore = 100 - angleYawPenalty - angleRollPenalty;
+            qualityScore = qualityScore.clamp(0, 100);
           }
-        } else {
-          recognition.name = "Unknown";
-          // Don't reset _lastKnownFace immediately to avoid flickering
-          if (_framesSinceLastRecognition > RECOGNITION_FREQUENCY * 2) {
-            _lastKnownFace = null;
+          recognition.qualityScore = qualityScore;
+          
+          // Add confidence level
+          double confidence = (1 - recognition.distance) * 100;
+          confidence = confidence.clamp(0, 100);
+          
+          // Debug output
+          print('Recognition result: name=${recognition.name}, distance=${recognition.distance.toStringAsFixed(3)}, confidence=${confidence.toStringAsFixed(1)}%');
+          
+          // Only identify faces with good confidence
+          if (recognition.name != "Unknown" && confidence > 65) { // Increased threshold for better accuracy
+            recognition.name = "${recognition.name.split(' ')[0]} (${confidence.toStringAsFixed(0)}%)"; // Only show name without previous confidence
+            
+            // Cache this face for future frames only if it's high confidence
+            if (confidence > 80) { // Increased threshold for caching
+              _lastKnownFace = recognition;
+              _framesSinceLastRecognition = 0;
+            }
+          } else {
+            recognition.name = "Unknown";
+            // Don't reset _lastKnownFace immediately to avoid flickering
+            if (_framesSinceLastRecognition > RECOGNITION_FREQUENCY * 2) {
+              _lastKnownFace = null;
+            }
+          }
+          
+          recognitions.add(recognition);
+        } catch (e) {
+          print('Ошибка в processRecognitions: $e');
+          _consecutiveErrors++;
+          if (_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            _useEmergencyConverter = true;
           }
         }
-        
-        recognitions.add(recognition);
       }
       
       // Reset error counter on success

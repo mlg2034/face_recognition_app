@@ -117,13 +117,64 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
     try {
       // Check if we have valid embeddings
       if (widget.recognition.embeddings.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error: No valid face data available'))
-        );
-        return;
+        print('Warning: Empty embeddings detected, attempting to regenerate...');
+        
+        // Prepare the image for the model - make sure it's the correct size
+        img.Image preparedFace = widget.croppedFace;
+        
+        // Ensure face image is the expected size for the model
+        if (preparedFace.width != 112 || preparedFace.height != 112) {
+          preparedFace = img.copyResize(
+            preparedFace, 
+            width: 112, 
+            height: 112,
+            interpolation: img.Interpolation.cubic
+          );
+        }
+        
+        // Try to generate embeddings directly using the recognition service
+        try {
+          // We need to create a fake recognition with the right face
+          Recognition tempRecog = Recognition(
+            "temp", 
+            widget.recognition.location, 
+            [], 
+            0.0
+          );
+          
+          // Process through the detection service again
+          // This is a workaround to regenerate embeddings
+          tempRecog = widget.faceDetectionService.recognizer.recognize(
+            preparedFace, 
+            widget.recognition.location
+          );
+          
+          // If we got valid embeddings, use them
+          if (tempRecog.embeddings.isNotEmpty) {
+            print('Successfully regenerated embeddings (length: ${tempRecog.embeddings.length})');
+            
+            // Register with the regenerated embeddings
+            await widget.faceDetectionService.registerFace(
+              textEditingController.text, 
+              tempRecog.embeddings
+            );
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('${textEditingController.text} registered successfully'))
+            );
+            
+            Navigator.pop(context, true);
+            return;
+          } else {
+            throw Exception('Failed to generate valid embeddings after retry');
+          }
+        } catch (e) {
+          print('Error regenerating embeddings: $e');
+          throw Exception('Could not process face data: $e');
+        }
       }
       
-      // Register the face with error handling
+      // Normal registration path with existing embeddings
       await widget.faceDetectionService.registerFace(
         textEditingController.text, 
         widget.recognition.embeddings
