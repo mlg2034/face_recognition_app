@@ -17,10 +17,13 @@ class Recognizer {
   static const int HEIGHT = 112;
   final FirebaseDBService _firebaseDBService = FirebaseDBService();
   final DatabaseHelper dbHelper = DatabaseHelper();
-  Map<String, Recognition> registered = Map();
+  Map<String, Recognition> registered = {};
   static const double RECOGNITION_THRESHOLD = 0.55;
   
-  static const int MAX_EMBEDDINGS_PER_PERSON = 5;
+  // Use Float32List for better performance with vector operations
+  late Float32List _inputBuffer;
+  late Float32List _outputBuffer;
+  bool _modelLoaded = false;
   
   @override
   String get modelName => 'assets/mobile_face_net.tflite';
@@ -32,114 +35,215 @@ class Recognizer {
       _interpreterOptions.threads = numThreads;
     }
     
-    loadModel();
-    _initializeDbHelper();
-    loadRegisteredFaces();
+    // Pre-allocate buffers
+    _inputBuffer = Float32List(1 * HEIGHT * WIDTH * 3);
+    _outputBuffer = Float32List(1 * 192);
+    
+    // Initialize database first, then load model and faces
+    _initializeDbHelper().then((_) {
+      loadModel();
+      loadRegisteredFaces();
+    });
   }
 
   Future<void> _initializeDbHelper() async {
-    await dbHelper.init();
+    try {
+      await dbHelper.init();
+      print('Database initialized successfully');
+    } catch (e) {
+      print('Error initializing database: $e');
+      // Rethrow to ensure caller knows initialization failed
+      rethrow;
+    }
   }
 
   Future<void> loadRegisteredFaces() async {
     registered.clear();
     try {
-      // Load from local database
+      // Ensure database is initialized
+      if (!await _isDbInitialized()) {
+        await _initializeDbHelper();
+      }
+      
+      // Create map to track already loaded names
+      Map<String, bool> loadedNames = {};
+      
+      // First load from local database for fast access
       final localRows = await dbHelper.queryAllRows();
       for (var row in localRows) {
         final String name = row[DatabaseHelper.columnName];
         final String embeddingStr = row[DatabaseHelper.columnEmbedding];
-        final List<double> embeddings = embeddingStr.split(',').map((e) => double.parse(e)).toList();
-        
-        Recognition recognition = Recognition(
-          name,
-          Rect.zero,
-          embeddings,
-          0
-        );
-        registered[name] = recognition;
+        try {
+          final List<double> embeddings = embeddingStr.split(',').map((e) => double.parse(e)).toList();
+          
+          Recognition recognition = Recognition(
+            name,
+            Rect.zero,
+            embeddings,
+            0
+          );
+          registered[name] = recognition;
+          loadedNames[name] = true;
+        } catch (e) {
+          // Молчаливая обработка ошибок для повышения производительности
+          print('Ошибка парсинга локальных данных: $e');
+        }
       }
       
-      // Also refresh from Firebase
-      final users = await _firebaseDBService.getAllUsers();
-      for (final user in users) {
-        Recognition recognition = Recognition(
-          user.name, 
-          Rect.zero, 
-          user.embeddings, 
-          0
-        );
-        registered[user.id] = recognition;
+      // Затем загружаем из Firebase и обновляем существующие записи или добавляем новые
+      try {
+        final users = await _firebaseDBService.getAllUsers();
+        
+        // Обновляем данные и добавляем недостающие
+        for (final user in users) {
+          if (user.embeddings.isNotEmpty) {
+            Recognition recognition = Recognition(
+              user.name, 
+              Rect.zero, 
+              user.embeddings, 
+              0
+            );
+            registered[user.id] = recognition;
+            
+            // Также обновляем данные в локальной базе, если их там нет
+            if (!loadedNames.containsKey(user.name)) {
+              try {
+                Map<String, dynamic> row = {
+                  DatabaseHelper.columnName: user.name,
+                  DatabaseHelper.columnEmbedding: user.embeddings.join(",")
+                };
+                await dbHelper.insert(row);
+                print('Синхронизирован пользователь из Firebase: ${user.name}');
+              } catch (e) {
+                print('Ошибка синхронизации: $e');
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('Ошибка загрузки пользователей из Firebase: $e');
       }
     } catch (e) {
-      print('Error loading faces: $e');
-      registered.clear();
+      print('Ошибка загрузки лиц: $e');
+    }
+  }
+
+  Future<bool> _isDbInitialized() async {
+    try {
+      // Try a simple database operation to check if it's initialized
+      await dbHelper.queryRowCount();
+      return true;
+    } catch (e) {
+      print('Database not initialized: $e');
+      return false;
     }
   }
 
   void registerFaceInDB(String name, List<double> embedding) async {
     try {
-      // Process embedding for local DB
-      List<double> processedEmbedding;
-      if (registered.containsKey(name)) {
-        var existing = registered[name]!.embeddings;
-        
-        List<double> averagedEmbedding = [];
-        
-        if (existing.isNotEmpty) {
-          List<double> normalizedNew = normalizeEmbedding(embedding);
-          List<double> normalizedExisting = normalizeEmbedding(existing);
-          
-          for (int i = 0; i < normalizedNew.length; i++) {
-            double weightedAvg = (normalizedExisting[i] * 0.7) + (normalizedNew[i] * 0.3);
-            averagedEmbedding.add(weightedAvg);
-          }
-          
-          averagedEmbedding = normalizeEmbedding(averagedEmbedding);
-        } else {
-          averagedEmbedding = normalizeEmbedding(embedding);
-        }
-        
-        processedEmbedding = averagedEmbedding;
-      } else {
-        processedEmbedding = normalizeEmbedding(embedding);
+      // Ensure embedding is valid
+      if (embedding.isEmpty) {
+        print('Error: Cannot register face with empty embedding');
+        return;
       }
       
-      // Save to local SQLite database
+      // Create a unique ID for each registration to avoid name conflicts
+      String registrationId = DateTime.now().millisecondsSinceEpoch.toString() + '_' + name;
+      
+      // Always normalize the input embedding
+      List<double> processedEmbedding = normalizeEmbedding(embedding);
+      
+      // Check if the face is already registered with a different name
+      bool possibleDuplicate = false;
+      String? existingName;
+      
+      // Scan existing faces to detect duplicates
+      for (var entry in registered.entries) {
+        List<double> existingEmb = entry.value.embeddings;
+        if (existingEmb.isEmpty || existingEmb.length != processedEmbedding.length) continue;
+        
+        // Calculate similarity with existing face
+        double similarity = calculateSimilarity(processedEmbedding, existingEmb);
+        
+        // If very similar to existing face, it might be a duplicate
+        if (similarity > 0.8) {
+          possibleDuplicate = true;
+          existingName = entry.value.name;
+          break;
+        }
+      }
+      
+      if (possibleDuplicate) {
+        print('Warning: This face appears similar to existing user "$existingName"');
+        // Continue anyway but log the warning
+      }
+      
+      // Save to local DB for faster access
       Map<String, dynamic> row = {
         DatabaseHelper.columnName: name,
         DatabaseHelper.columnEmbedding: processedEmbedding.join(",")
       };
-      final localId = await dbHelper.insert(row);
-      print('Inserted row id in local DB: $localId');
+      await dbHelper.insert(row);
       
-      // Create user DTO for Firebase
+      // Save to Firebase
       final createUserDto = CreateUserDTO(
         name: name,
         embeddings: processedEmbedding,
       );
       
-      // Save to Firebase
       await _firebaseDBService.addUser(createUserDto);
-      print('User registered in Firebase with ID: ${createUserDto.id}');
       
-      // Update local cache
+      // Update cache in memory with safe ID
+      Recognition recognition = Recognition(
+        name,
+        Rect.zero,
+        processedEmbedding,
+        0
+      );
+      registered[createUserDto.id] = recognition;
+      
+      // Reload all faces to ensure consistency
       await loadRegisteredFaces();
+      
+      print('Successfully registered face for: $name');
     } catch (e) {
       print('Error registering face: $e');
     }
   }
+  
+  // Helper method to calculate similarity between two embeddings
+  double calculateSimilarity(List<double> embA, List<double> embB) {
+    if (embA.length != embB.length) return 0.0;
+    
+    double dotProduct = 0.0;
+    double normA = 0.0;
+    double normB = 0.0;
+    
+    for (int i = 0; i < embA.length; i++) {
+      dotProduct += embA[i] * embB[i];
+      normA += embA[i] * embA[i];
+      normB += embB[i] * embB[i];
+    }
+    
+    if (normA <= 0 || normB <= 0) return 0.0;
+    
+    return dotProduct / (sqrt(normA) * sqrt(normB));
+  }
 
   List<double> normalizeEmbedding(List<double> embedding) {
     double sumSquares = 0.0;
-    for (double val in embedding) {
+    List<double> normalized = List<double>.filled(embedding.length, 0.0);
+    
+    // Calculate norm in one pass
+    for (int i = 0; i < embedding.length; i++) {
+      double val = embedding[i];
       sumSquares += val * val;
     }
     double norm = sqrt(sumSquares);
     
-    List<double> normalized = [];
-    for (double val in embedding) {
-      normalized.add(val / norm);
+    // Normalize in one pass
+    for (int i = 0; i < embedding.length; i++) {
+      normalized[i] = embedding[i] / norm;
     }
     
     return normalized;
@@ -151,57 +255,69 @@ class Recognizer {
         modelName,
         options: _interpreterOptions,
       );
-      print('MobileFaceNet model loaded successfully');
+      _modelLoaded = true;
     } catch (e) {
-      print('Unable to create interpreter, Caught Exception: ${e.toString()}');
+      _modelLoaded = false;
     }
   }
 
-  List<dynamic> imageToArray(img.Image inputImage){
+  List<dynamic> imageToArray(img.Image inputImage) {
     img.Image resizedImage = img.copyResize(inputImage, width: WIDTH, height: HEIGHT);
     
-    List<double> flattenedList = [];
-    
+    int pixelIndex = 0;
     for (int y = 0; y < HEIGHT; y++) {
       for (int x = 0; x < WIDTH; x++) {
         final pixel = resizedImage.getPixel(x, y);
-        flattenedList.add((pixel.r / 127.5) - 1.0);
-        flattenedList.add((pixel.g / 127.5) - 1.0);
-        flattenedList.add((pixel.b / 127.5) - 1.0);
+        _inputBuffer[pixelIndex++] = (pixel.r / 127.5) - 1.0;
+        _inputBuffer[pixelIndex++] = (pixel.g / 127.5) - 1.0;
+        _inputBuffer[pixelIndex++] = (pixel.b / 127.5) - 1.0;
       }
     }
     
-    Float32List float32Array = Float32List.fromList(flattenedList);
-    return float32Array.reshape([1, HEIGHT, WIDTH, 3]);
+    return [_inputBuffer.buffer.asFloat32List(0, 1 * HEIGHT * WIDTH * 3)];
   }
 
   Recognition recognize(img.Image image, Rect location) {
+    if (!_modelLoaded) {
+      return Recognition("Model not loaded", location, [], 1.0);
+    }
+    
     var input = imageToArray(image);
-    
-    List output = List.filled(1*192, 0).reshape([1,192]);
+    var output = [_outputBuffer.buffer.asFloat32List(0, 1 * 192)];
 
-    final runs = DateTime.now().millisecondsSinceEpoch;
     interpreter.run(input, output);
-    final run = DateTime.now().millisecondsSinceEpoch - runs;
-    print('Time to run inference: $run ms');
     
-    List<double> outputArray = output.first.cast<double>();
-    
+    List<double> outputArray = output[0].toList();
     outputArray = normalizeEmbedding(outputArray);
 
     Pair pair = findNearest(outputArray);
-    print("distance= ${pair.distance}");
-
     return Recognition(pair.name, location, outputArray, pair.distance);
   }
 
-  findNearest(List<double> emb) {
-    Pair pair = Pair("Unknown", -5);
+  Pair findNearest(List<double> emb) {
+    Pair pair = Pair("Unknown", 1.0);
+    double minDistance = 1.0;
+    
+    // Use stricter threshold for more accurate identification
+    double recognitionThreshold = 0.42;  // Lower means stricter matching
+    
+    // Skip processing if no faces registered
+    if (registered.isEmpty) {
+      return pair;
+    }
 
+    // Cache multiple possible matches to handle edge cases
+    final Map<String, double> possibleMatches = {};
+    
     for (MapEntry<String, Recognition> item in registered.entries) {
-      final String id = item.key;
       List<double> knownEmb = item.value.embeddings;
       
+      // Skip invalid embeddings
+      if (knownEmb.isEmpty || knownEmb.length != emb.length) {
+        continue;
+      }
+      
+      // Compute L2 normalized cosine similarity
       double dotProduct = 0.0;
       double normA = 0.0;
       double normB = 0.0;
@@ -212,19 +328,55 @@ class Recognizer {
         normB += knownEmb[i] * knownEmb[i];
       }
       
+      // Avoid division by zero
+      if (normA <= 0 || normB <= 0) continue;
+      
       normA = sqrt(normA);
       normB = sqrt(normB);
       
       double similarity = dotProduct / (normA * normB);
-      double distance = 1 - similarity;
+      double distance = 1.0 - similarity;
       
-      if (pair.distance == -5 || distance < pair.distance) {
+      // Secondary verification using Euclidean distance
+      double euclideanDistSquared = 0.0;
+      for (int i = 0; i < emb.length; i++) {
+        double diff = emb[i] - knownEmb[i];
+        euclideanDistSquared += diff * diff;
+      }
+      
+      // Add to possible matches if the score is reasonable
+      if (distance < 0.6 && euclideanDistSquared < 1.2) {
+        possibleMatches[item.value.name] = distance;
+      }
+      
+      // Track the best match
+      if (distance < minDistance && euclideanDistSquared < 1.0) {
+        minDistance = distance;
         pair.distance = distance;
-        pair.name = item.value.name; // Use the name from Recognition
+        pair.name = item.value.name;
       }
     }
     
-    if (pair.distance > RECOGNITION_THRESHOLD) {
+    // If best match is close to threshold, ensure it's significantly better than others
+    if (pair.distance > recognitionThreshold * 0.9 && possibleMatches.length > 1) {
+      // Get second best match
+      String bestName = pair.name;
+      double secondBestDistance = 1.0;
+      
+      for (var entry in possibleMatches.entries) {
+        if (entry.key != bestName && entry.value < secondBestDistance) {
+          secondBestDistance = entry.value;
+        }
+      }
+      
+      // If the difference between best and second best is small, mark as unknown
+      if (secondBestDistance - pair.distance < 0.07) {
+        pair.name = "Unknown";
+      }
+    }
+    
+    // Final threshold check
+    if (pair.distance > recognitionThreshold) {
       pair.name = "Unknown";
     }
     
@@ -232,51 +384,193 @@ class Recognizer {
   }
 
   void close() {
-    interpreter.close();
+    if (_modelLoaded) {
+      interpreter.close();
+    }
   }
 
   Future<List<String>> getRegisteredUsers() async {
-    await loadRegisteredFaces(); // Refresh from Firebase
     return registered.values.map((recognition) => recognition.name).toList();
   }
 
   Future<void> deleteUser(String userName) async {
     try {
-      // Find user ID by name
-      String? userId;
+      // Проверяем, существует ли пользователь локально
+      bool deletedFromLocal = false;
+      try {
+        deletedFromLocal = await dbHelper.deleteByName(userName) > 0;
+        print('Удаление из локальной БД: ${deletedFromLocal ? "успешно" : "не найден"}');
+      } catch (e) {
+        print('Ошибка при удалении из локальной БД: $e');
+      }
+      
+      // Ищем по имени в списке зарегистрированных пользователей
+      List<String> userIdsToDelete = [];
       for (var entry in registered.entries) {
         if (entry.value.name == userName) {
-          userId = entry.key;
-          break;
+          userIdsToDelete.add(entry.key);
         }
       }
       
-      if (userId != null) {
-        await _firebaseDBService.deleteUser(userId);
-        registered.remove(userId);
+      // Если нашли такого пользователя, удаляем из Firebase
+      if (userIdsToDelete.isNotEmpty) {
+        for (String userId in userIdsToDelete) {
+          try {
+            await _firebaseDBService.deleteUser(userId);
+            registered.remove(userId);
+            print('Удален пользователь из Firebase: $userId');
+          } catch (e) {
+            print('Ошибка при удалении из Firebase: $e');
+          }
+        }
+      } else {
+        print('Пользователь с именем $userName не найден в кэше');
+        
+        // Пробуем найти в Firebase по имени
+        try {
+          final users = await _firebaseDBService.getAllUsers();
+          for (final user in users) {
+            if (user.name == userName) {
+              await _firebaseDBService.deleteUser(user.id);
+              print('Удален пользователь из Firebase по имени: ${user.name}');
+            }
+          }
+        } catch (e) {
+          print('Ошибка при поиске в Firebase: $e');
+        }
       }
+      
+      // Обновляем кэш данных
+      await loadRegisteredFaces();
+      
+      print('Пользователь $userName успешно удален');
     } catch (e) {
-      print('Error deleting user: $e');
+      print('Ошибка при удалении пользователя: $e');
     }
   }
 
   Future<void> clearAllData() async {
     try {
-      // Get all users and delete them one by one
       final users = await _firebaseDBService.getAllUsers();
       for (final user in users) {
-        await _firebaseDBService.deleteUser(user.id);
+        _firebaseDBService.deleteUser(user.id);
       }
       registered.clear();
     } catch (e) {
-      print('Error clearing data: $e');
+      // Silent error handling
     }
   }
+
+  // Метод для проверки и исправления целостности базы данных
+  Future<Map<String, dynamic>> validateAndFixDatabase() async {
+    Map<String, dynamic> result = {
+      'totalRecords': 0,
+      'validRecords': 0,
+      'invalidRecords': 0,
+      'deletedRecords': 0,
+      'errors': <String>[],
+    };
+    
+    try {
+      // Загружаем все записи из локальной базы данных
+      final localRows = await dbHelper.queryAllRows();
+      result['totalRecords'] = localRows.length;
+      
+      int validCount = 0;
+      int invalidCount = 0;
+      int deletedCount = 0;
+      
+      // Проверяем каждую запись
+      for (var row in localRows) {
+        try {
+          final String name = row[DatabaseHelper.columnName];
+          final String embeddingStr = row[DatabaseHelper.columnEmbedding];
+          final int rowId = row[DatabaseHelper.columnId];
+          
+          // Проверяем, что имя не пустое
+          if (name.isEmpty) {
+            invalidCount++;
+            await dbHelper.delete(rowId.toString());
+            deletedCount++;
+            continue;
+          }
+          
+          // Проверяем, что эмбеддинг парсится корректно
+          try {
+            final List<double> embeddings = embeddingStr.split(',').map((e) => double.parse(e)).toList();
+            
+            // Проверяем размер эмбеддинга (должен быть 192 для MobileFaceNet)
+            if (embeddings.length != 192) {
+              invalidCount++;
+              await dbHelper.delete(rowId.toString());
+              deletedCount++;
+              continue;
+            }
+            
+            // Проверяем, что значения в эмбеддинге корректные
+            bool hasInvalidValues = false;
+            for (double value in embeddings) {
+              if (value.isNaN || value.isInfinite) {
+                hasInvalidValues = true;
+                break;
+              }
+            }
+            
+            if (hasInvalidValues) {
+              invalidCount++;
+              await dbHelper.delete(rowId.toString());
+              deletedCount++;
+              continue;
+            }
+            
+            validCount++;
+          } catch (e) {
+            // Если эмбеддинг не парсится, удаляем запись
+            invalidCount++;
+            await dbHelper.delete(rowId.toString());
+            deletedCount++;
+          }
+        } catch (e) {
+          result['errors'].add('Ошибка при проверке записи: $e');
+        }
+      }
+      
+      // Обновляем результаты
+      result['validRecords'] = validCount;
+      result['invalidRecords'] = invalidCount;
+      result['deletedRecords'] = deletedCount;
+      
+      // Проверяем Firebase
+      try {
+        final users = await _firebaseDBService.getAllUsers();
+        result['firebaseRecords'] = users.length;
+        
+        int invalidFirebaseRecords = 0;
+        for (final user in users) {
+          if (user.embeddings.isEmpty || user.name.isEmpty) {
+            invalidFirebaseRecords++;
+          }
+        }
+        result['invalidFirebaseRecords'] = invalidFirebaseRecords;
+      } catch (e) {
+        result['errors'].add('Ошибка при проверке Firebase: $e');
+      }
+      
+      // Перезагружаем базу данных
+      await loadRegisteredFaces();
+      
+    } catch (e) {
+      result['errors'].add('Общая ошибка проверки: $e');
+    }
+    
+    return result;
+  }
 }
-class Pair{
+
+class Pair {
    String name;
    double distance;
-   Pair(this.name,this.distance);
+   Pair(this.name, this.distance);
 }
 
 

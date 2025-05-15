@@ -30,16 +30,32 @@ class FirebaseDBService {
   Future<List<UserModel>> getAllUsers() async {
     try {
       final snapshot = await _database.child(_usersPath).get();
-      if (snapshot.exists) {
-        final data = snapshot.value as Map<String, dynamic>;
-        return data.entries.map((entry) {
-          final userData = entry.value as Map<String, dynamic>;
-          return UserModel.fromJson(userData);
-        }).toList();
+      List<UserModel> users = [];
+      
+      if (snapshot.exists && snapshot.value != null) {
+        final data = snapshot.value as Map<dynamic, dynamic>;
+        
+        data.forEach((key, value) {
+          if (value is Map<dynamic, dynamic>) {
+            // Преобразуем Map<dynamic, dynamic> в Map<String, dynamic>
+            final Map<String, dynamic> userData = {};
+            value.forEach((k, v) {
+              userData[k.toString()] = v;
+            });
+            
+            try {
+              users.add(UserModel.fromJson(userData));
+            } catch (e) {
+              print('Error converting user data: $e');
+            }
+          }
+        });
       }
-      return [];
+      
+      return users;
     } catch (e) {
-      throw Exception('Failed to get users: $e');
+      print('Failed to get users: $e');
+      return [];
     }
   }
 
@@ -61,14 +77,29 @@ class FirebaseDBService {
 
   Stream<List<UserModel>> usersStream() {
     return _database.child(_usersPath).onValue.map((event) {
-      if (event.snapshot.exists) {
-        final data = event.snapshot.value as Map<String, dynamic>;
-        return data.entries.map((entry) {
-          final userData = entry.value as Map<String, dynamic>;
-          return UserModel.fromJson(userData);
-        }).toList();
+      List<UserModel> users = [];
+      
+      if (event.snapshot.exists && event.snapshot.value != null) {
+        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        
+        data.forEach((key, value) {
+          if (value is Map<dynamic, dynamic>) {
+            // Преобразуем Map<dynamic, dynamic> в Map<String, dynamic>
+            final Map<String, dynamic> userData = {};
+            value.forEach((k, v) {
+              userData[k.toString()] = v;
+            });
+            
+            try {
+              users.add(UserModel.fromJson(userData));
+            } catch (e) {
+              print('Error converting user data in stream: $e');
+            }
+          }
+        });
       }
-      return [];
+      
+      return users;
     });
   }
 }

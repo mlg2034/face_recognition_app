@@ -16,12 +16,19 @@ class FaceDetectionService {
   late Recognizer recognizer;
   
   bool _useEmergencyConverter = false;
+  int _consecutiveErrors = 0;
+  static const int MAX_CONSECUTIVE_ERRORS = 5;
+  
+  // Cache the last known face
+  Recognition? _lastKnownFace;
+  int _framesSinceLastRecognition = 0;
+  static const int RECOGNITION_FREQUENCY = 10; // Only process every N frames for known faces
   
   FaceDetectionService() {
     var options = FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.accurate,
+      performanceMode: FaceDetectorMode.fast,  // Use fast mode by default
       enableLandmarks: true,
-      enableContours: true,
+      enableContours: false,  // Disable contours for performance
       enableClassification: true,
       enableTracking: true,
       minFaceSize: 0.15,
@@ -31,7 +38,15 @@ class FaceDetectionService {
   }
   
   Future<void> initialize() async {
-    await recognizer.loadRegisteredFaces();
+    try {
+      // Wait for registered faces to be loaded
+      await recognizer.loadRegisteredFaces();
+      print('Face detection service initialized successfully');
+    } catch (e) {
+      print('Error initializing face detection service: $e');
+      // Rethrow so the caller knows initialization failed
+      rethrow;
+    }
   }
   
   Future<List<Face>> detectFaces(InputImage inputImage) async {
@@ -45,105 +60,195 @@ class FaceDetectionService {
   ) async {
     List<Recognition> recognitions = [];
     
-    img.Image? image;
-    try {
-      if (_useEmergencyConverter) {
-        print('Using emergency image converter');
-        image = EmergencyImageConverter.convertToGrayscale(frame);
+    if (faces.isEmpty) {
+      _framesSinceLastRecognition = 0;
+      _lastKnownFace = null;
+      return recognitions;
+    }
+    
+    // Increment frame counter
+    _framesSinceLastRecognition++;
+    
+    // Only reuse _lastKnownFace if we're very confident in the recognition
+    if (_lastKnownFace != null && 
+        _lastKnownFace!.distance < 0.3 && // Only reuse high confidence matches
+        _framesSinceLastRecognition < RECOGNITION_FREQUENCY) {
+      
+      // Make sure the face is in a similar position to avoid misidentification
+      Rect currentFaceRect = faces.first.boundingBox;
+      Rect lastFaceRect = _lastKnownFace!.location;
+      
+      // Calculate overlap between current face and last known face
+      Rect intersection = Rect.fromLTRB(
+        max(currentFaceRect.left, lastFaceRect.left),
+        max(currentFaceRect.top, lastFaceRect.top),
+        min(currentFaceRect.right, lastFaceRect.right),
+        min(currentFaceRect.bottom, lastFaceRect.bottom)
+      );
+      
+      // Only reuse if there's significant overlap
+      double overlapArea = intersection.width * intersection.height;
+      if (overlapArea <= 0) {
+        // No overlap, don't reuse
+        _lastKnownFace = null;
       } else {
+        double lastFaceArea = lastFaceRect.width * lastFaceRect.height;
+        double currentFaceArea = currentFaceRect.width * currentFaceRect.height;
+        double overlapRatio = overlapArea / min(lastFaceArea, currentFaceArea);
+        
+        if (overlapRatio > 0.7) { // 70% overlap required
+          // Only update the bounding box and increment recognition count
+          Recognition updatedRecognition = Recognition(
+            _lastKnownFace!.name,
+            faces.first.boundingBox,
+            _lastKnownFace!.embeddings,
+            _lastKnownFace!.distance,
+            qualityScore: _lastKnownFace!.qualityScore
+          );
+          recognitions.add(updatedRecognition);
+          return recognitions;
+        } else {
+          // Not enough overlap
+          _lastKnownFace = null;
+        }
+      }
+    }
+    
+    // Restart recognition from scratch
+    try {
+      // Try faster conversion methods first
+      img.Image? image;
+      if (!_useEmergencyConverter) {
         try {
           image = Platform.isIOS 
-              ? await ImageService.convertBGRA8888ToImage(frame) 
-              : await ImageService.convertNV21(frame);
+              ? await ImageService.convertBGRA8888Fast(frame) 
+              : await ImageService.convertYUVToImage(frame);
         } catch (e) {
-          print('Normal conversion failed, switching to emergency converter: $e');
-          _useEmergencyConverter = true;
+          print('Ошибка преобразования изображения: $e');
+          _consecutiveErrors++;
+          if (_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            _useEmergencyConverter = true;
+          }
           image = EmergencyImageConverter.convertToGrayscale(frame);
         }
+      } else {
+        image = EmergencyImageConverter.convertToGrayscale(frame);
       }
       
       if (image == null) {
-        print('Image conversion returned null, using emergency converter');
+        print('Преобразование изображения вернуло null');
+        _useEmergencyConverter = true;
         image = EmergencyImageConverter.convertToGrayscale(frame);
       }
       
-      image = img.copyRotate(image!,
-          angle: cameraDirection == CameraLensDirection.front ? 270 : 90);
+      // Rotate image based on camera direction
+      int rotationAngle = cameraDirection == CameraLensDirection.front ? 270 : 90;
+      image = img.copyRotate(image, angle: rotationAngle);
       
       Size imageSize = Size(image.width.toDouble(), image.height.toDouble());
       
-      for (Face face in faces) {
-        try {
-          // Calculate face quality score
-          double qualityScore = FaceDetectorUtils.calculateFaceQualityScore(face, imageSize);
-          
-          // Apply stricter face quality checks using the utility class
-          if (!FaceDetectorUtils.isFaceSuitableForRecognition(face, imageSize)) {
-            // Add a recognition with guidance message for feedback
-            String guidanceMessage = FaceDetectorUtils.getFaceAlignmentGuidance(face);
-            recognitions.add(Recognition(
-              guidanceMessage, 
-              face.boundingBox, 
-              [], 
-              1.0,
-              qualityScore: qualityScore
-            ));
-            continue;
-          }
-          
-          // Get expanded face rectangle with padding using utility
-          Rect paddedRect = FaceDetectorUtils.getExpandedFaceRect(face, imageSize);
-          
-          // Add safety checks for crop operation
-          if (paddedRect.left < 0 || paddedRect.top < 0 || 
-              paddedRect.right > image.width || paddedRect.bottom > image.height ||
-              paddedRect.width <= 0 || paddedRect.height <= 0) {
-            print('Warning: Invalid face crop rectangle');
-            continue;
-          }
-          
-          // Safely crop the face
-          img.Image croppedFace;
-          try {
-            croppedFace = img.copyCrop(
-              image, 
-              x: paddedRect.left.toInt(),
-              y: paddedRect.top.toInt(),
-              width: paddedRect.width.toInt(),
-              height: paddedRect.height.toInt()
-            );
-          } catch (e) {
-            print('Error cropping face, using dummy face: $e');
-            croppedFace = EmergencyImageConverter.createDummyFace(112, 112);
-          }
-          
-          img.Image enhancedFace = ImageService.enhanceImage(croppedFace);
-          
-          Recognition recognition = recognizer.recognize(enhancedFace, face.boundingBox);
-          
-          // Add quality score to recognition
-          recognition.qualityScore = qualityScore;
-          
-          // Improved confidence calculation
-          double confidence = (1 - recognition.distance) * 100;
-          confidence = confidence.clamp(0, 100);
-          
-          // More strict threshold for unknown faces
-          if (recognition.distance > 0.6) {
-            recognition.name = "Unknown";
-          } else {
-            recognition.name = "${recognition.name} (${confidence.toStringAsFixed(1)}%)";
-          }
-          
-          recognitions.add(recognition);
-        } catch (e) {
-          print('Error processing face: $e');
+      // Process all faces but prioritize larger ones
+      List<Face> sortedFaces = List.from(faces)
+        ..sort((a, b) => (b.boundingBox.width * b.boundingBox.height)
+                        .compareTo(a.boundingBox.width * a.boundingBox.height));
+      
+      // Process up to 2 largest faces for better performance
+      int processedFaces = 0;
+      for (Face face in sortedFaces) {
+        if (processedFaces >= 2) break; // Only process max 2 faces for performance
+        
+        // Face quality check
+        if (!FaceDetectorUtils.isFaceSuitableForRecognition(face, imageSize)) {
+          String guidanceMessage = FaceDetectorUtils.getFaceAlignmentGuidance(face);
+          recognitions.add(Recognition(
+            guidanceMessage, 
+            face.boundingBox, 
+            [], 
+            1.0
+          ));
           continue;
         }
+        
+        processedFaces++;
+        
+        // Get face rectangle with safety checks
+        Rect paddedRect = FaceDetectorUtils.getExpandedFaceRect(face, imageSize);
+        if (paddedRect.left < 0 || paddedRect.top < 0 || 
+            paddedRect.right > image.width || paddedRect.bottom > image.height ||
+            paddedRect.width <= 0 || paddedRect.height <= 0) {
+          recognitions.add(Recognition(
+            "Лицо слишком близко к краю", 
+            face.boundingBox, 
+            [], 
+            1.0
+          ));
+          continue;
+        }
+        
+        // Crop face
+        img.Image croppedFace;
+        try {
+          croppedFace = img.copyCrop(
+            image, 
+            x: paddedRect.left.toInt(),
+            y: paddedRect.top.toInt(),
+            width: paddedRect.width.toInt(),
+            height: paddedRect.height.toInt()
+          );
+        } catch (e) {
+          print('Ошибка обрезки лица: $e');
+          continue;
+        }
+        
+        // Process recognition
+        Recognition recognition = recognizer.recognize(croppedFace, face.boundingBox);
+        
+        // Calculate quality score based on face attributes
+        double qualityScore = 0;
+        if (face.headEulerAngleY != null && face.headEulerAngleZ != null) {
+          // Better score for frontal faces
+          double angleYawPenalty = (face.headEulerAngleY!.abs() / 36.0) * 30; // Up to 30% penalty
+          double angleRollPenalty = (face.headEulerAngleZ!.abs() / 36.0) * 20; // Up to 20% penalty
+          qualityScore = 100 - angleYawPenalty - angleRollPenalty;
+          qualityScore = qualityScore.clamp(0, 100);
+        }
+        recognition.qualityScore = qualityScore;
+        
+        // Add confidence level
+        double confidence = (1 - recognition.distance) * 100;
+        confidence = confidence.clamp(0, 100);
+        
+        // Debug output
+        print('Recognition result: name=${recognition.name}, distance=${recognition.distance.toStringAsFixed(3)}, confidence=${confidence.toStringAsFixed(1)}%');
+        
+        // Only identify faces with good confidence
+        if (recognition.name != "Unknown" && confidence > 65) { // Increased threshold for better accuracy
+          recognition.name = "${recognition.name.split(' ')[0]} (${confidence.toStringAsFixed(0)}%)"; // Only show name without previous confidence
+          
+          // Cache this face for future frames only if it's high confidence
+          if (confidence > 80) { // Increased threshold for caching
+            _lastKnownFace = recognition;
+            _framesSinceLastRecognition = 0;
+          }
+        } else {
+          recognition.name = "Unknown";
+          // Don't reset _lastKnownFace immediately to avoid flickering
+          if (_framesSinceLastRecognition > RECOGNITION_FREQUENCY * 2) {
+            _lastKnownFace = null;
+          }
+        }
+        
+        recognitions.add(recognition);
       }
+      
+      // Reset error counter on success
+      _consecutiveErrors = 0;
     } catch (e) {
-      print('Error in processRecognitions: $e');
-      _useEmergencyConverter = true; // Switch to emergency converter for future frames
+      print('Ошибка в processRecognitions: $e');
+      _consecutiveErrors++;
+      if (_consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        _useEmergencyConverter = true;
+      }
     }
     
     return recognitions;
@@ -199,10 +304,27 @@ class FaceDetectionService {
   
   Future<void> deleteUser(String name) async {
     await recognizer.deleteUser(name);
+    _lastKnownFace = null; // Reset cache after deletion
   }
   
   void dispose() {
+    recognizer.close();
     faceDetector.close();
+  }
+  
+  // Add a method to reset face recognition state
+  Future<void> resetRecognitionCache() async {
+    _lastKnownFace = null;
+    _framesSinceLastRecognition = 0;
+    _useEmergencyConverter = false;
+    _consecutiveErrors = 0;
+    await recognizer.loadRegisteredFaces();
+  }
+  
+  // Method to check if registration database has any faces
+  Future<bool> hasRegisteredFaces() async {
+    List<String> users = await recognizer.getRegisteredUsers();
+    return users.isNotEmpty;
   }
 } 
 

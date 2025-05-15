@@ -28,23 +28,20 @@ class LivenessSettingsService {
       }
     }
     
-    return true; // Требуется пройти проверку
+    return true;
   }
   
-  // Сохранить состояние успешно пройденной проверки живости
   static Future<void> setLivenessCheckPassed() async {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now().millisecondsSinceEpoch;
     await prefs.setInt(_lastSuccessTimeKey, now);
   }
   
-  // Включить/выключить требование проверки живости
   static Future<void> setLivenessCheckRequired(bool required) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_livenessRequiredKey, required);
   }
   
-  // Получить время последней успешной проверки (null, если не было)
   static Future<DateTime?> getLastSuccessTime() async {
     final prefs = await SharedPreferences.getInstance();
     final timestamp = prefs.getInt(_lastSuccessTimeKey);
@@ -54,7 +51,6 @@ class LivenessSettingsService {
     return null;
   }
   
-  // Сбросить все настройки проверки живости
   static Future<void> resetLivenessSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_livenessRequiredKey);

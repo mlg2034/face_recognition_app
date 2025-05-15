@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'dart:math' as Math;
 
 class ImageService {
   static var IOS_BYTES_OFFSET = 28;
@@ -194,27 +195,137 @@ class ImageService {
       // Fall back to synchronous method if isolate fails
       return convertNV21Sync(image);
     } catch (e) {
-      print('Error in convertNV21: $e');
       // Return a safe fallback
       return img.Image(width: image.width, height: image.height);
     }
   }
   
-  static Future<img.Image?> convertBGRA8888ToImage(CameraImage image) async {
+  // Add fast YUV conversion method
+  static Future<img.Image?> convertYUVToImage(CameraImage image) async {
     try {
-      // First try with isolate
-      if (_isolateReady) {
-        final result = await processImageWithIsolate(image, false);
-        if (result != null) return result;
+      // Direct pixel access for better performance
+      final img.Image result = img.Image(width: image.width, height: image.height);
+      
+      final Uint8List yPlane = image.planes[0].bytes;
+      final Uint8List uPlane = image.planes[1].bytes;
+      final Uint8List vPlane = image.planes[2].bytes;
+      
+      final int uvRowStride = image.planes[1].bytesPerRow;
+      final int uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
+      
+      for (int y = 0; y < image.height; y += 2) {
+        for (int x = 0; x < image.width; x += 2) {
+          final int uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
+          
+          // Fast method processes 2x2 blocks at once for better performance
+          _convertYUVblock(
+            result, x, y, 
+            yPlane, uPlane, vPlane, 
+            y * image.width + x, uvIndex, uvPixelStride, 
+            image.width
+          );
+        }
       }
       
-      // Fall back to synchronous method if isolate fails
-      return convertBGRA8888ToImageSync(image);
+      return result;
     } catch (e) {
-      print('Error in convertBGRA8888ToImage: $e');
-      // Return a safe fallback
-      return img.Image(width: image.width, height: image.height);
+      return null;
     }
+  }
+  
+  static void _convertYUVblock(
+    img.Image output, int x, int y,
+    Uint8List yPlane, Uint8List uPlane, Uint8List vPlane,
+    int yIndex, int uvIndex, int uvPixelStride, int width
+  ) {
+    final int u = uPlane[uvIndex];
+    final int v = vPlane[uvIndex];
+    
+    // Precompute color conversion
+    int rOffset = (1.370705 * (v - 128)).toInt();
+    int gOffset = (-0.698001 * (v - 128) - 0.337633 * (u - 128)).toInt();
+    int bOffset = (1.732446 * (u - 128)).toInt();
+    
+    // Process 2x2 block
+    for (int j = 0; j < 2; j++) {
+      for (int i = 0; i < 2; i++) {
+        if (x + i < output.width && y + j < output.height) {
+          int pixelIndex = yIndex + j * width + i;
+          if (pixelIndex < yPlane.length) {
+            int yValue = yPlane[pixelIndex] & 0xFF;
+            
+            // YUV to RGB conversion
+            int r = (yValue + rOffset).clamp(0, 255);
+            int g = (yValue + gOffset).clamp(0, 255);
+            int b = (yValue + bOffset).clamp(0, 255);
+            
+            output.setPixelRgb(x + i, y + j, r, g, b);
+          }
+        }
+      }
+    }
+  }
+
+  // Fast BGRA conversion for iOS
+  static Future<img.Image?> convertBGRA8888Fast(CameraImage image) async {
+    try {
+      final plane = image.planes[0];
+      
+      // Use direct buffer access for better performance
+      return img.Image.fromBytes(
+        width: image.width,
+        height: image.height,
+        bytes: plane.bytes.buffer,
+        bytesOffset: IOS_BYTES_OFFSET,
+        order: img.ChannelOrder.bgra,
+      );
+    } catch (e) {
+      try {
+        // Fallback to manual conversion
+        final plane = image.planes[0];
+        final img.Image result = img.Image(width: image.width, height: image.height);
+        
+        // Process in blocks for better performance
+        const int blockSize = 16;
+        for (int y = 0; y < image.height; y += blockSize) {
+          for (int x = 0; x < image.width; x += blockSize) {
+            _processBGRABlock(result, plane, x, y, 
+                              Math.min(blockSize, image.width - x), 
+                              Math.min(blockSize, image.height - y));
+          }
+        }
+        
+        return result;
+      } catch (e) {
+        return null;
+      }
+    }
+  }
+  
+  static void _processBGRABlock(img.Image output, Plane plane, int startX, int startY, int width, int height) {
+    final int bytesPerPixel = 4;
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int pixelIndex = IOS_BYTES_OFFSET + 
+                              (startY + y) * plane.bytesPerRow + 
+                              (startX + x) * bytesPerPixel;
+        
+        if (pixelIndex + 3 < plane.bytes.length) {
+          final int b = plane.bytes[pixelIndex] & 0xFF;
+          final int g = plane.bytes[pixelIndex + 1] & 0xFF;
+          final int r = plane.bytes[pixelIndex + 2] & 0xFF;
+          
+          output.setPixelRgb(startX + x, startY + y, r, g, b);
+        }
+      }
+    }
+  }
+  
+  // Adding image enhancement with reduced processing
+  static img.Image enhanceImage(img.Image input) {
+    // Simply return the input image since complex processing is costly
+    return input;
   }
   
   static img.Image convertNV21Sync(CameraImage image) {
@@ -225,99 +336,6 @@ class ImageService {
     return _safeConvertBGRA8888(image);
   }
 
-  // New method to enhance image quality for better face recognition
-  static img.Image enhanceImage(img.Image inputImage) {
-    try {
-    // Step 1: Convert to grayscale for better feature extraction
-    img.Image grayscale = img.grayscale(inputImage);
-    
-    // Step 2: Apply brightness and contrast adjustment
-    img.Image adjusted = adjustBrightnessContrast(grayscale);
-    
-    // Step 3: Apply light normalization to reduce lighting variations
-    img.Image normalized = normalizeIllumination(adjusted);
-    
-    // Step 4: Apply slight gaussian blur to reduce noise (optional)
-    img.Image smoothed = img.gaussianBlur(normalized, radius: 1);
-    
-    // Step 5: Convert back to RGB if needed for the recognition model
-    return img.copyResize(smoothed, width: inputImage.width, height: inputImage.height);
-    } catch (e) {
-      print('Error in enhanceImage: $e');
-      return inputImage; // Return original image on error
-    }
-  }
-  
-  // Helper method for brightness and contrast adjustment
-  static img.Image adjustBrightnessContrast(img.Image image, {int brightness = 0, double contrast = 1.2}) {
-    try {
-    final result = img.Image(width: image.width, height: image.height);
-    
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        
-        // Apply brightness and contrast adjustment
-        int value = pixel.r.toInt(); // For grayscale, r=g=b
-        double adjusted = (value - 128) * contrast + 128 + brightness;
-        
-        // Manual clamping to avoid type issues
-        int finalValue;
-        if (adjusted < 0) {
-          finalValue = 0;
-        } else if (adjusted > 255) {
-          finalValue = 255;
-        } else {
-          finalValue = adjusted.round();
-        }
-        
-        result.setPixelRgb(x, y, finalValue, finalValue, finalValue);
-      }
-    }
-    
-    return result;
-    } catch (e) {
-      print('Error in adjustBrightnessContrast: $e');
-      return image; // Return original image on error
-    }
-  }
-  
-  // Helper method for illumination normalization
-  static img.Image normalizeIllumination(img.Image image) {
-    try {
-    // Calculate mean pixel value
-    double sum = 0;
-    int count = 0;
-    
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        sum += pixel.r; // For grayscale, r=g=b
-        count++;
-      }
-    }
-    
-    final int mean = (sum / count).toInt();
-    
-    // Create a new image with normalized illumination
-    final result = img.Image(width: image.width, height: image.height);
-    
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        // Adjust pixel value to normalize illumination
-        int newValue = (pixel.r - mean + 128).clamp(0, 255).toInt();
-        result.setPixelRgb(x, y, newValue, newValue, newValue);
-      }
-    }
-    
-    return result;
-    } catch (e) {
-      print('Error in normalizeIllumination: $e');
-      return image; // Return original image on error
-    }
-  }
-  
   // Clean up resources
   static void dispose() {
     if (_isolate != null) {

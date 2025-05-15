@@ -13,15 +13,39 @@ class DatabaseHelper {
   static const columnEmbedding = 'embedding';
 
   late Database _db;
+  bool _initialized = false;
 
   Future<void> init() async {
-    final documentsDirectory = await getApplicationDocumentsDirectory();
-    final path = join(documentsDirectory.path, _databaseName);
-    _db = await openDatabase(
-      path,
-      version: _databaseVersion,
-      onCreate: _onCreate,
-    );
+    // If already initialized, return immediately
+    if (_initialized) {
+      print('Database already initialized, skipping');
+      return;
+    }
+    
+    try {
+      final documentsDirectory = await getApplicationDocumentsDirectory();
+      final path = join(documentsDirectory.path, _databaseName);
+      _db = await openDatabase(
+        path,
+        version: _databaseVersion,
+        onCreate: _onCreate,
+      );
+      _initialized = true;
+      print('Database initialized at: $path');
+    } catch (e) {
+      print('Error initializing database: $e');
+      rethrow;
+    }
+  }
+
+  // Check if the database is initialized
+  bool get isInitialized => _initialized;
+
+  // Ensure database is initialized before any operation
+  Future<void> _ensureInitialized() async {
+    if (!_initialized) {
+      await init();
+    }
   }
 
   // SQL code to create the database table
@@ -41,18 +65,21 @@ class DatabaseHelper {
   // and the value is the column value. The return value is the id of the
   // inserted row.
   Future<int> insert(Map<String, dynamic> row) async {
+    await _ensureInitialized();
     return await _db.insert(table, row);
   }
 
   // All of the rows are returned as a list of maps, where each map is
   // a key-value list of columns.
   Future<List<Map<String, dynamic>>> queryAllRows() async {
+    await _ensureInitialized();
     return await _db.query(table);
   }
 
   // All of the methods (insert, query, update, delete) can also be done using
   // raw SQL commands. This method uses a raw query to give the row count.
   Future<int> queryRowCount() async {
+    await _ensureInitialized();
     final results = await _db.rawQuery('SELECT COUNT(*) FROM $table');
     return Sqflite.firstIntValue(results) ?? 0;
   }
@@ -60,6 +87,7 @@ class DatabaseHelper {
   // We are assuming here that the id column in the map is set. The other
   // column values will be used to update the row.
   Future<int> update(Map<String, dynamic> row) async {
+    await _ensureInitialized();
     int id = row[columnId];
     return await _db.update(
       table,
@@ -69,17 +97,31 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> delete(String name) async {
-    final db = await _db;
-    await db.delete(
+  Future<int> deleteById(int id) async {
+    await _ensureInitialized();
+    return await _db.delete(
+      table,
+      where: '$columnId = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> deleteByName(String name) async {
+    await _ensureInitialized();
+    return await _db.delete(
       table,
       where: '$columnName = ?',
       whereArgs: [name],
     );
   }
 
+  Future<void> delete(String name) async {
+    await _ensureInitialized();
+    await deleteByName(name);
+  }
+
   Future<void> deleteAll() async {
-    final db = await _db;
-    await db.delete(table);
+    await _ensureInitialized();
+    await _db.delete(table);
   }
 }

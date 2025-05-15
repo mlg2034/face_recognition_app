@@ -1,17 +1,15 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:realtime_face_recognition/src/services/camera_service.dart';
 import 'package:realtime_face_recognition/src/services/face_detection_service.dart';
-import 'package:realtime_face_recognition/src/services/liveness_detection_service.dart';
-import 'package:realtime_face_recognition/src/services/liveness_settings_service.dart';
 import 'package:realtime_face_recognition/src/services/recognition.dart';
 import 'package:realtime_face_recognition/src/screens/face_registration_screen.dart';
 import 'package:realtime_face_recognition/src/screens/registered_users_screen.dart';
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
-import 'package:realtime_face_recognition/ui/liveness_check_widget.dart';
 import 'package:realtime_face_recognition/src/services/image_service.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
@@ -31,15 +29,11 @@ class _CameraWidgetState extends State<CameraWidget>
     with WidgetsBindingObserver {
   late CameraService cameraService;
   late FaceDetectionService faceDetectionService;
-  late LivenessDetectionService livenessDetectionService;
 
   bool isBusy = false;
   late Size size;
   CameraImage? frame;
   bool register = false;
-  bool showLivenessCheck = false;
-  bool livenessCheckRequired = true;
-  bool livenessVerified = false;
   List<Recognition> recognitions = [];
 
   @override
@@ -48,53 +42,94 @@ class _CameraWidgetState extends State<CameraWidget>
     WidgetsBinding.instance.addObserver(this);
     cameraService = CameraService();
     faceDetectionService = FaceDetectionService();
-    livenessDetectionService = LivenessDetectionService();
 
-    _loadLivenessSettings();
     initializeServices();
-  }
-
-  Future<void> _loadLivenessSettings() async {
-    final required = await LivenessSettingsService.isLivenessCheckRequired();
-    setState(() {
-      livenessCheckRequired = required;
-      livenessVerified = !required;
-    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (cameraService.controller == null ||
-        !cameraService.controller!.value.isInitialized) {
+    if (cameraService.controller == null) {
       return;
     }
 
-    if (state == AppLifecycleState.inactive) {
-      cameraService.dispose();
+    // Handle app lifecycle changes
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      // Make sure to properly clean up camera resources when app goes background
+      safeDisposeCameraResources();
     } else if (state == AppLifecycleState.resumed) {
+      // Reinitialize camera when app comes back to foreground
       initializeServices();
-      _loadLivenessSettings();
+    }
+  }
+
+  Future<void> safeDisposeCameraResources() async {
+    try {
+      if (cameraService.controller != null) {
+        await cameraService.stopImageStream();
+        await Future.delayed(const Duration(milliseconds: 200)); // Give time for stream to stop
+        cameraService.dispose(); // This doesn't return a Future
+      }
+    } catch (e) {
+      print('Error safely disposing camera: $e');
     }
   }
 
   Future<void> initializeServices() async {
-    await cameraService.initialize(widget.cameras);
-    await faceDetectionService.initialize();
+    try {
+      // Make sure any existing camera is properly disposed
+      await safeDisposeCameraResources();
+      
+      // Check if widget is still mounted
+      if (!mounted) return;
+      
+      // Initialize camera
+      await cameraService.initialize(widget.cameras);
+      
+      // Initialize face detection service
+      try {
+        await faceDetectionService.initialize();
+      } catch (e) {
+        print('Face detection service initialization error: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error loading face data: $e')),
+          );
+        }
+      }
 
-    if (mounted) {
-      setState(() {});
-      startImageStream();
+      if (mounted) {
+        setState(() {});
+        startImageStream();
+      }
+    } catch (e) {
+      print('Error initializing camera services: $e');
+      // Show error to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Camera initialization error: $e')),
+        );
+      }
     }
   }
 
   void startImageStream() {
-    cameraService.startImageStream((image) {
-      if (!isBusy) {
-        isBusy = true;
-        frame = image;
-        processImage();
-      }
-    });
+    if (cameraService.controller == null || 
+        !cameraService.controller!.value.isInitialized) {
+      print('Cannot start image stream, camera not initialized');
+      return;
+    }
+    
+    try {
+      cameraService.startImageStream((image) {
+        if (!isBusy) {
+          isBusy = true;
+          frame = image;
+          processImage();
+        }
+      });
+    } catch (e) {
+      print('Error starting image stream: $e');
+    }
   }
 
   Future<void> processImage() async {
@@ -104,26 +139,13 @@ class _CameraWidgetState extends State<CameraWidget>
     }
 
     InputImage? inputImage =
-        cameraService.getInputImage(frame!, widget.cameras);
+    cameraService.getInputImage(frame!, widget.cameras);
     if (inputImage == null) {
       isBusy = false;
       return;
     }
 
     List<Face> faces = await faceDetectionService.detectFaces(inputImage);
-
-    // Process liveness check if active
-    if (showLivenessCheck && 
-        livenessDetectionService.state == LivenessState.inProgress) {
-      bool livenessCompleted = livenessDetectionService.processFrame(faces);
-      if (livenessCompleted) {
-        setState(() {
-          livenessVerified = true;
-        });
-        // Сохраняем успешное прохождение проверки
-        await LivenessSettingsService.setLivenessCheckPassed();
-      }
-    }
 
     List<Recognition> results = await faceDetectionService.processRecognitions(
         faces, frame!, cameraService.cameraLensDirection);
@@ -134,27 +156,11 @@ class _CameraWidgetState extends State<CameraWidget>
         isBusy = false;
       });
 
-      if (register && results.isNotEmpty && (!livenessCheckRequired || livenessVerified)) {
+      if (register && results.isNotEmpty) {
         navigateToFaceRegistration(results.first);
         register = false;
       }
     }
-  }
-
-  void startLivenessCheck() {
-    setState(() {
-      showLivenessCheck = true;
-      livenessVerified = false;
-    });
-    livenessDetectionService.start();
-  }
-
-  void cancelLivenessCheck() {
-    setState(() {
-      showLivenessCheck = false;
-    });
-    livenessDetectionService.reset();
-    _loadLivenessSettings(); // Перезагружаем настройки
   }
 
   void navigateToFaceRegistration(Recognition recognition) async {
@@ -165,25 +171,25 @@ class _CameraWidgetState extends State<CameraWidget>
     img.Image? image;
     try {
       image = EmergencyImageConverter.convertToGrayscale(frame!);
-      
+
       // Rotate image based on camera direction
       image = img.copyRotate(image,
           angle: cameraService.cameraLensDirection == CameraLensDirection.front
               ? 270
               : 90);
-              
-      if (recognition.location.left < 0 || 
-          recognition.location.top < 0 || 
-          recognition.location.right > image.width || 
+
+      if (recognition.location.left < 0 ||
+          recognition.location.top < 0 ||
+          recognition.location.right > image.width ||
           recognition.location.bottom > image.height ||
-          recognition.location.width <= 0 || 
+          recognition.location.width <= 0 ||
           recognition.location.height <= 0) {
         print('Warning: Invalid face crop rectangle');
         // Create a dummy face instead
         img.Image croppedFace = EmergencyImageConverter.createDummyFace(112, 112);
-        
+
         if (!mounted) return;
-        
+
         // Navigate to registration screen with dummy face
         final result = await Navigator.push(
           context,
@@ -222,17 +228,10 @@ class _CameraWidgetState extends State<CameraWidget>
       // Show error to user
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error processing face image. Please try again.'))
+            SnackBar(content: Text('Error processing face image. Please try again.'))
         );
       }
     }
-
-    // Reset liveness state
-    setState(() {
-      showLivenessCheck = false;
-      livenessVerified = false;
-    });
-    livenessDetectionService.reset();
 
     // Resume camera stream
     if (mounted) {
@@ -264,7 +263,7 @@ class _CameraWidgetState extends State<CameraWidget>
         cameraService.controller == null ||
         !cameraService.controller!.value.isInitialized) {
       return const Center(
-          child: Text('Camera is not initialized', style: AppFonts.w500s20));
+          child: CupertinoActivityIndicator());
     }
 
     final Size imageSize = Size(
@@ -282,9 +281,8 @@ class _CameraWidgetState extends State<CameraWidget>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    cameraService.dispose();
+    safeDisposeCameraResources(); // Don't await this
     faceDetectionService.dispose();
-    livenessDetectionService.dispose();
     IsolateUtils.dispose();
     super.dispose();
   }
@@ -292,7 +290,7 @@ class _CameraWidgetState extends State<CameraWidget>
   @override
   Widget build(BuildContext context) {
     size = MediaQuery.of(context).size;
-    
+
     if (cameraService.controller == null || !cameraService.controller!.value.isInitialized) {
       return Container(
         color: Colors.black,
@@ -305,10 +303,10 @@ class _CameraWidgetState extends State<CameraWidget>
     // Calculate the size to maintain aspect ratio
     final double screenAspectRatio = size.width / size.height;
     final double cameraAspectRatio = cameraService.controller!.value.aspectRatio;
-    
+
     final double previewWidth;
     final double previewHeight;
-    
+
     if (screenAspectRatio < cameraAspectRatio) {
       // Screen is narrower than camera feed
       previewWidth = size.width;
@@ -336,57 +334,15 @@ class _CameraWidgetState extends State<CameraWidget>
               ),
             ),
           ),
-          
+
           // Face detection overlay
           SizedBox(
             width: size.width,
             height: size.height,
             child: buildResult(),
           ),
-          
-          // Liveness check overlay
-          if (showLivenessCheck)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 20,
-              left: 20,
-              right: 20,
-              child: LivenessCheckWidget(
-                livenessService: livenessDetectionService,
-                onStart: () {
-                  startLivenessCheck();
-                },
-                onCancel: () {
-                  cancelLivenessCheck();
-                },
-              ),
-            ),
-          
-          // Liveness verified indicator
-          if (livenessVerified)
-            Positioned(
-              top: 20,
-              right: 20,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(Icons.check_circle, color: Colors.white, size: 16),
-                    SizedBox(width: 8),
-                    Text(
-                      'Живость подтверждена',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          
-          // Add control buttons
+
+          // Add control buttons if needed
           Positioned(
             bottom: 20,
             left: 0,
@@ -396,7 +352,7 @@ class _CameraWidgetState extends State<CameraWidget>
               children: [
                 _buildControlButton(
                   icon: Icons.cached,
-                  label: "Переключить",
+                  label: "Switch",
                   onPressed: () async {
                     await cameraService.toggleCameraDirection(widget.cameras);
                     if (mounted) {
@@ -405,36 +361,20 @@ class _CameraWidgetState extends State<CameraWidget>
                     }
                   },
                 ),
-                _buildControlButton(
-                  icon: Icons.people,
-                  label: "Пользователи",
-                  onPressed: navigateToRegisteredUsers,
-                ),
+                //TODO registered user buttons
+
+                // _buildControlButton(
+                //   icon: Icons.people,
+                //   label: "Users",
+                //   onPressed: navigateToRegisteredUsers,
+                // ),
                 _buildControlButton(
                   icon: Icons.face_retouching_natural,
-                  label: "Регистрация",
-                  onPressed: () {
-                    // Если требуется проверка живости и она еще не пройдена
-                    if (livenessCheckRequired && !livenessVerified) {
-                      setState(() {
-                        showLivenessCheck = true;
-                      });
-                    } else {
-                      setState(() {
-                        register = true;
-                      });
-                    }
-                  },
-                ),
-                _buildControlButton(
-                  icon: Icons.security,
-                  label: "Проверка",
+                  label: "Register",
                   onPressed: () {
                     setState(() {
-                      showLivenessCheck = true;
-                      livenessVerified = false;
+                      register = true;
                     });
-                    livenessDetectionService.reset();
                   },
                 ),
               ],
@@ -444,7 +384,7 @@ class _CameraWidgetState extends State<CameraWidget>
       ),
     );
   }
-  
+
   Widget _buildControlButton({
     required IconData icon,
     required String label,
