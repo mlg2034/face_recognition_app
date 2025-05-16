@@ -1,6 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:realtime_face_recognition/src/services/camera_service.dart';
@@ -11,6 +12,7 @@ import 'package:realtime_face_recognition/src/screens/registered_users_screen.da
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/app/ui/ui.dart';
 
@@ -25,14 +27,15 @@ class CameraWidget extends StatefulWidget {
 
 class _CameraWidgetState extends State<CameraWidget>
     with WidgetsBindingObserver {
-  late CameraService cameraService;
-  late FaceDetectionService faceDetectionService;
+  late final CameraService cameraService;
+  late final FaceDetectionService faceDetectionService;
 
   bool isBusy = false;
   late Size size;
   CameraImage? frame;
   bool register = false;
   List<Recognition> recognitions = [];
+  bool _isFirstFrameReceived = false;
 
   @override
   void initState() {
@@ -41,7 +44,88 @@ class _CameraWidgetState extends State<CameraWidget>
     cameraService = CameraService();
     faceDetectionService = FaceDetectionService();
 
-    initializeServices();
+    // Enable wakelock to prevent screen from turning off
+    WakelockPlus.enable();
+    
+    // Initialize camera and face detection in parallel
+    _parallelInitialization();
+  }
+
+  Future<void> _parallelInitialization() async {
+    // Show a blank screen while initializing
+    await Future.delayed(const Duration(milliseconds: 100));
+    
+    // Initialize camera and face detection service in parallel
+    await Future.wait([
+      _initializeCamera(),
+      _initializeFaceDetection(),
+    ]);
+    
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      await safeDisposeCameraResources();
+      if (!mounted) return;
+      
+      // Initialize camera with optimized settings
+      await cameraService.initialize(
+        widget.cameras,
+        resolutionPreset: ResolutionPreset.medium, // Lower resolution for speed
+        enableAudio: false, // Disable audio for faster startup
+      );
+      
+      // Lock orientation for better performance
+      await cameraService.controller?.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      
+      // Set lower FPS to improve performance (only on Android)
+      if (cameraService.controller != null) {
+        try {
+          // We use a try-catch because setFpsRange might not be available on all platforms
+          // This method is implemented in CameraService
+          await cameraService.setFpsRange(15, 15);
+        } catch (e) {
+          print('Warning: Could not set FPS range: $e');
+        }
+      }
+      
+      // Lock focus mode
+      await cameraService.controller?.setFocusMode(FocusMode.auto);
+      
+      // Listen for first frame to start processing stream
+      cameraService.controller?.addListener(() {
+        if (cameraService.controller!.value.isInitialized && 
+            !_isFirstFrameReceived) {
+          print('First frame received, starting image processing');
+          _isFirstFrameReceived = true;
+          startImageStream();
+        }
+      });
+      
+    } catch (e) {
+      print('Error initializing camera: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Camera initialization error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _initializeFaceDetection() async {
+    try {
+      await faceDetectionService.initialize();
+    } catch (e) {
+      print('Face detection service initialization error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading face data: $e')),
+        );
+      }
+    }
   }
 
   @override
@@ -51,60 +135,27 @@ class _CameraWidgetState extends State<CameraWidget>
     }
 
     // Handle app lifecycle changes
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      // Make sure to properly clean up camera resources when app goes background
+    if (state == AppLifecycleState.inactive) {
+      // Safely dispose camera resources when app goes to background
+      safeDisposeCameraResources();
+      _isFirstFrameReceived = false;
     } else if (state == AppLifecycleState.resumed) {
       // Reinitialize camera when app comes back to foreground
-      initializeServices();
+      _parallelInitialization();
     }
   }
 
   Future<void> safeDisposeCameraResources() async {
     try {
-      if (cameraService.controller != null) {
-        await cameraService.stopImageStream();
+      if (cameraService.controller != null && 
+          cameraService.controller!.value.isInitialized) {
+        if (cameraService.controller!.value.isStreamingImages) {
+          await cameraService.stopImageStream();
+        }
         await Future.delayed(const Duration(milliseconds: 200)); // Give time for stream to stop
       }
     } catch (e) {
       print('Error safely disposing camera: $e');
-    }
-  }
-
-  Future<void> initializeServices() async {
-    try {
-      // Make sure any existing camera is properly disposed
-      await safeDisposeCameraResources();
-      
-      // Check if widget is still mounted
-      if (!mounted) return;
-      
-      // Initialize camera
-      await cameraService.initialize(widget.cameras);
-      
-      // Initialize face detection service
-      try {
-        await faceDetectionService.initialize();
-      } catch (e) {
-        print('Face detection service initialization error: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error loading face data: $e')),
-          );
-        }
-      }
-
-      if (mounted) {
-        setState(() {});
-        startImageStream();
-      }
-    } catch (e) {
-      print('Error initializing camera services: $e');
-      // Show error to user
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Camera initialization error: $e')),
-        );
-      }
     }
   }
 
@@ -198,7 +249,6 @@ class _CameraWidgetState extends State<CameraWidget>
           ),
         );
       } else {
-        // Just crop the face region directly
         try {
           img.Image croppedFace = img.copyCrop(
             image, 
@@ -207,8 +257,6 @@ class _CameraWidgetState extends State<CameraWidget>
             width: recognition.location.width.round(),
             height: recognition.location.height.round()
           );
-          
-          // Resize to model requirements (112x112 is required by MobileFaceNet)
           croppedFace = img.copyResize(
             croppedFace,
             width: 112,
@@ -304,15 +352,6 @@ class _CameraWidgetState extends State<CameraWidget>
       size: Size(size.width, size.height),
     );
   }
-  //
-  // @override
-  // void dispose() {
-  //   WidgetsBinding.instance.removeObserver(this);
-  //   safeDisposeCameraResources(); // Don't await this
-  //   faceDetectionService.dispose();
-  //   IsolateUtils.dispose();
-  //   super.dispose();
-  // }
 
   @override
   Widget build(BuildContext context) {
@@ -362,12 +401,6 @@ class _CameraWidgetState extends State<CameraWidget>
             ),
           ),
 
-          // Face detection overlay
-          SizedBox(
-            width: size.width,
-            height: size.height,
-            child: buildResult(),
-          ),
 
           // Add control buttons if needed
           Positioned(
@@ -447,5 +480,13 @@ class _CameraWidgetState extends State<CameraWidget>
         ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    WakelockPlus.disable();
+    safeDisposeCameraResources();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 }

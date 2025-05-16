@@ -1,7 +1,7 @@
 import 'package:bloc/bloc.dart';
+import 'package:camera/camera.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
 import 'package:realtime_face_recognition/core/app/logic/multi_bloc_wrapper.dart';
 import 'package:realtime_face_recognition/firebase_options.dart';
 import 'package:realtime_face_recognition/src/screens/face_recognition_screen.dart';
@@ -14,10 +14,11 @@ late List<CameraDescription> cameras;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Configure Android to use CameraX automatically - package provides this by default
+  
   cameras = await availableCameras();
 
   await IsolateUtils.initialize();
-  WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   Bloc.observer = AppObserver();
 

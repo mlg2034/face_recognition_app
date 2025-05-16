@@ -8,7 +8,11 @@ class CameraService {
   CameraDescription? cameraDescription;
   CameraLensDirection cameraLensDirection = CameraLensDirection.front;
   
-  Future<void> initialize(List<CameraDescription> cameras) async {
+  Future<void> initialize(
+    List<CameraDescription> cameras, {
+    ResolutionPreset resolutionPreset = ResolutionPreset.medium,
+    bool enableAudio = false,
+  }) async {
     if (cameras.isEmpty) return;
     
     cameraDescription = cameraLensDirection == CameraLensDirection.front 
@@ -17,14 +21,38 @@ class CameraService {
     
     controller = CameraController(
       cameraDescription!, 
-      ResolutionPreset.medium,
+      resolutionPreset,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21 
           : ImageFormatGroup.bgra8888,
-      enableAudio: false
+      enableAudio: enableAudio
     );
     
     await controller!.initialize();
+  }
+  
+  // Method to set FPS range for Android devices
+  Future<void> setFpsRange(int min, int max) async {
+    if (controller == null || !controller!.value.isInitialized) return;
+    
+    if (Platform.isAndroid) {
+      try {
+        await controller!.setExposureOffset(0.0); // Reset exposure first
+        await controller!.setZoomLevel(1.0); // Reset zoom first
+        await Future.delayed(const Duration(milliseconds: 100));
+        
+        const platform = MethodChannel('flutter.io/cameraPlugin/camera');
+        await platform.invokeMethod('setFpsRange', {
+          'cameraName': cameraDescription!.name,
+          'minFps': min,
+          'maxFps': max,
+        }).catchError((e) {
+          print('Error setting FPS range: $e');
+        });
+      } catch (e) {
+        print('Error setting FPS range: $e');
+      }
+    }
   }
   
   Future<void> startImageStream(Function(CameraImage) onImage) async {
@@ -41,7 +69,11 @@ class CameraService {
     controller?.dispose();
   }
   
-  Future<void> toggleCameraDirection(List<CameraDescription> cameras) async {
+  Future<void> toggleCameraDirection(
+    List<CameraDescription> cameras, {
+    ResolutionPreset resolutionPreset = ResolutionPreset.medium,
+    bool enableAudio = false,
+  }) async {
     await stopImageStream();
     
     if (cameraLensDirection == CameraLensDirection.back) {
@@ -60,11 +92,11 @@ class CameraService {
     
     controller = CameraController(
       cameraDescription!, 
-      ResolutionPreset.medium,
+      resolutionPreset,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21 
           : ImageFormatGroup.bgra8888,
-      enableAudio: false
+      enableAudio: enableAudio
     );
     
     await controller!.initialize();
