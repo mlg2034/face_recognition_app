@@ -11,7 +11,7 @@ import 'package:realtime_face_recognition/src/screens/registered_users_screen.da
 import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
 import 'package:realtime_face_recognition/src/services/image_service.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
-import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart';
+import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart' as emergency;
 
 import '../core/app/ui/ui.dart';
 
@@ -117,7 +117,7 @@ class _CameraWidgetState extends State<CameraWidget>
 
     img.Image? image;
     try {
-      image = EmergencyImageConverter.convertToGrayscale(frame!);
+      image = emergency.EmergencyImageConverter.convertToGrayscale(frame!);
       
       // Rotate image based on camera direction
       image = img.copyRotate(image,
@@ -133,7 +133,7 @@ class _CameraWidgetState extends State<CameraWidget>
           recognition.location.height <= 0) {
         print('Warning: Invalid face crop rectangle');
         // Create a dummy face instead
-        img.Image croppedFace = EmergencyImageConverter.createDummyFace(112, 112);
+        img.Image croppedFace = emergency.EmergencyImageConverter.createDummyFace(112, 112);
         
         if (!mounted) return;
         
@@ -220,7 +220,7 @@ class _CameraWidgetState extends State<CameraWidget>
 
     return CustomPaint(
       painter: FaceDetectorPainter(
-          imageSize, recognitions, cameraService.cameraLensDirection),
+          recognitions, imageSize, Size(size.width, size.height)),
       size: Size(size.width, size.height),
     );
   }
@@ -289,6 +289,56 @@ class _CameraWidgetState extends State<CameraWidget>
             child: buildResult(),
           ),
           
+          // Status bar with metrics at the top
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            left: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  if (recognitions.isNotEmpty)
+                    ..._buildMetricsWidgets(),
+                  if (recognitions.isEmpty)
+                    const Text('No face detected', style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            ),
+          ),
+          
+          // Accuracy metrics bar at the bottom
+          Positioned(
+            bottom: 80, // Above the control buttons
+            left: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      faceDetectionService.getAccuracyReport(),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
           // Add control buttons if needed
           Positioned(
             bottom: 20,
@@ -321,6 +371,11 @@ class _CameraWidgetState extends State<CameraWidget>
                       register = true;
                     });
                   },
+                ),
+                _buildControlButton(
+                  icon: Icons.bar_chart,
+                  label: "Stats",
+                  onPressed: _showFaceRecognitionStats,
                 ),
               ],
             ),
@@ -365,5 +420,159 @@ class _CameraWidgetState extends State<CameraWidget>
         ),
       ],
     );
+  }
+  
+  // Show face recognition statistics dialog
+  Future<void> _showFaceRecognitionStats() async {
+    await cameraService.stopImageStream();
+    
+    if (!mounted) return;
+    
+    // Show dialog with stats options
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Face Recognition Statistics'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Select an option to view or export face recognition metrics:'),
+            const SizedBox(height: 20),
+            _buildStatsButton(
+              icon: Icons.show_chart,
+              label: 'Show ROC Curve & Statistics',
+              onPressed: () async {
+                Navigator.pop(context);
+                // Delay slightly to let dialog close
+                await Future.delayed(const Duration(milliseconds: 200));
+                // Show all statistics including ROC curve
+                await faceDetectionService.showFaceRecognitionStats();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Statistics displayed in console logs'))
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildStatsButton(
+              icon: Icons.file_download,
+              label: 'Export ROC Data (CSV)',
+              onPressed: () async {
+                Navigator.pop(context);
+                final filePath = await faceDetectionService.exportROCData();
+                if (filePath.isNotEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('ROC data exported to: $filePath'))
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Error exporting ROC data'))
+                  );
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildStatsButton(
+              icon: Icons.text_snippet,
+              label: 'Generate Metrics Log',
+              onPressed: () async {
+                Navigator.pop(context);
+                final filePath = await faceDetectionService.generateMetricsLog();
+                if (filePath.isNotEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Metrics log saved to: $filePath'))
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Error generating metrics log'))
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    
+    // Resume camera stream
+    if (mounted) {
+      startImageStream();
+    }
+  }
+  
+  Widget _buildStatsButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.blue),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label)),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Build metrics widgets for the status bar
+  List<Widget> _buildMetricsWidgets() {
+    if (recognitions.isEmpty) return [];
+    
+    final recognition = recognitions.first;
+    final String name = recognition.label;
+    final double distance = recognition.distance;
+    final double quality = recognition.quality;
+    
+    return [
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Name', style: TextStyle(color: Colors.white70, fontSize: 10)),
+          Text(
+            name.length > 12 ? '${name.substring(0, 10)}...' : name, 
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Distance', style: TextStyle(color: Colors.white70, fontSize: 10)),
+          Text(
+            distance.toStringAsFixed(3),
+            style: TextStyle(
+              color: distance < Recognition.DEFAULT_THRESHOLD ? Colors.green : Colors.red,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Quality', style: TextStyle(color: Colors.white70, fontSize: 10)),
+          Text(
+            quality.toStringAsFixed(1),
+            style: TextStyle(
+              color: quality > 70 ? Colors.green : Colors.orange,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    ];
   }
 }

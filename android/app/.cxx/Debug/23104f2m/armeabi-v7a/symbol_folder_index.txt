@@ -1,0 +1,1 @@
+/Users/askhatkabtytaev/Desktop/face_recognition_app/build/app/intermediates/cxx/Debug/23104f2m/obj/armeabi-v7a
