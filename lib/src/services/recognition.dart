@@ -2,8 +2,8 @@ import 'dart:ui';
 import 'dart:math' as math;
 
 class Recognition {
-  // Default threshold for face recognition
-  static const double DEFAULT_THRESHOLD = 0.48; // Adjusted threshold from ROC analysis
+  // Default threshold for face recognition - made much more strict to prevent false positives
+  static const double DEFAULT_THRESHOLD = 0.15; // Changed from 0.48 to 0.15 for stricter matching
   
   String _label;
   final Rect _location;

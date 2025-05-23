@@ -29,6 +29,19 @@ class LocalEmergencyConverter {
     
     return image;
   }
+  
+  static img.Image createDummyFace(int width, int height) {
+    final img.Image result = img.Image(width: width, height: height);
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final int value = ((x * 255) ~/ width + (y * 255) ~/ height) ~/ 2;
+        result.setPixelRgb(x, y, value, value, value);
+      }
+    }
+    
+    return result;
+  }
 }
 
 // Add missing functions from ImageService
@@ -85,169 +98,36 @@ extension ImageProcessing on ImageService {
 }
 
 class FaceDetectionService {
-  late final FaceDetector _faceDetector;
-  final RecognitionLogger _logger = RecognitionLogger();
-  Recognizer? _recognizer;
+  late FaceDetector faceDetector;
+  late Recognizer recognizer;
+  
   bool _useEmergencyConverter = false;
   
-  // Quality threshold for face recognition
-  static const double MIN_QUALITY_THRESHOLD = 0.6;
-  
-  // Store recent face quality scores
-  final Map<String, List<double>> _faceQualityHistory = {};
-  
   FaceDetectionService() {
-    final options = FaceDetectorOptions(
-      enableClassification: true,
+    var options = FaceDetectorOptions(
+      performanceMode: FaceDetectorMode.accurate,
       enableLandmarks: true,
       enableContours: true,
+      enableClassification: true,
       enableTracking: true,
-      performanceMode: FaceDetectorMode.accurate,
-      minFaceSize: 0.15,
+      minFaceSize: 0.1,  // Reduced from 0.15 for better frontal detection
     );
-    
-    _faceDetector = FaceDetector(options: options);
-    _recognizer = Recognizer();
+    faceDetector = FaceDetector(options: options);
+    recognizer = Recognizer();
   }
   
-  // Initialize method
   Future<void> initialize() async {
-    await _logger.initialize();
-    if (_recognizer != null) {
-      await _recognizer!.loadModel();
-      await _recognizer!.loadRegisteredFaces();
-    }
+    await recognizer.initDB();
   }
   
-  // Method to detect faces
   Future<List<Face>> detectFaces(InputImage inputImage) async {
-    try {
-      return await _faceDetector.processImage(inputImage);
-    } catch (e) {
-      print('Error detecting faces: $e');
-      return [];
-    }
+    return await faceDetector.processImage(inputImage);
   }
   
-  // Process recognitions from detected faces
   Future<List<Recognition>> processRecognitions(
     List<Face> faces, 
     CameraImage frame, 
     CameraLensDirection cameraDirection
-  ) async {
-    // Default to "Unknown" person ID for non-registration process
-    return processImage(frame, cameraDirection, false, "Unknown");
-  }
-  
-  // Get accuracy report as a string
-  String getAccuracyReport() {
-    final metrics = _logger.getAccuracyMetrics();
-    return "Acc: ${(metrics['accuracy'] * 100).toStringAsFixed(1)}% | " +
-           "FAR: ${(metrics['far'] * 100).toStringAsFixed(1)}% | " +
-           "FRR: ${(metrics['frr'] * 100).toStringAsFixed(1)}%";
-  }
-  
-  // Show face recognition statistics
-  Future<void> showFaceRecognitionStats() async {
-    final metrics = _logger.getAccuracyMetrics();
-    final roc = await _logger.calculateROCCurve();
-    
-    print('\n=== FACE RECOGNITION STATISTICS ===');
-    print('Total samples: ${metrics['samples']}');
-    print('Accuracy: ${(metrics['accuracy'] * 100).toStringAsFixed(2)}%');
-    print('Precision: ${(metrics['precision'] * 100).toStringAsFixed(2)}%');
-    print('Recall: ${(metrics['recall'] * 100).toStringAsFixed(2)}%');
-    print('F1 Score: ${(metrics['f1_score'] * 100).toStringAsFixed(2)}%');
-    print('False Accept Rate: ${(metrics['far'] * 100).toStringAsFixed(2)}%');
-    print('False Reject Rate: ${(metrics['frr'] * 100).toStringAsFixed(2)}%');
-    print('Current threshold: ${metrics['threshold']}');
-    
-    if (roc.isNotEmpty) {
-      print('\n=== ROC CURVE DATA (SAMPLE) ===');
-      for (int i = 0; i < min(5.0, roc.length.toDouble()); i++) {
-        print('Threshold: ${roc[i]['threshold']}, TPR: ${roc[i]['tpr']}, FPR: ${roc[i]['fpr']}');
-      }
-      print('... (${roc.length} points total)');
-    }
-    
-    return;
-  }
-  
-  // Export ROC data
-  Future<String> exportROCData() async {
-    try {
-      final roc = await _logger.calculateROCCurve();
-      if (roc.isEmpty) {
-        return '';
-      }
-      
-      // Get documents directory
-      final directory = await getApplicationDocumentsDirectory();
-      final path = '${directory.path}/roc_curve_data.csv';
-      
-      // Create CSV data
-      final buffer = StringBuffer();
-      buffer.writeln('Threshold,TPR,FPR,FAR,FRR');
-      
-      for (var point in roc) {
-        buffer.writeln('${point['threshold']},${point['tpr']},${point['fpr']},${point['far']},${point['frr']}');
-      }
-      
-      // Write to file
-      final file = File(path);
-      await file.writeAsString(buffer.toString());
-      
-      return path;
-    } catch (e) {
-      print('Error exporting ROC data: $e');
-      return '';
-    }
-  }
-  
-  // Generate metrics log
-  Future<String> generateMetricsLog() async {
-    try {
-      final metrics = _logger.getAccuracyMetrics();
-      
-      // Get documents directory
-      final directory = await getApplicationDocumentsDirectory();
-      final path = '${directory.path}/face_recognition_metrics.txt';
-      
-      // Create metrics report
-      final buffer = StringBuffer();
-      buffer.writeln('=== FACE RECOGNITION METRICS ===');
-      buffer.writeln('Generated: ${DateTime.now().toIso8601String()}');
-      buffer.writeln('');
-      buffer.writeln('Total samples: ${metrics['samples']}');
-      buffer.writeln('True Positives: ${metrics['truePositives']}');
-      buffer.writeln('False Positives: ${metrics['falsePositives']}');
-      buffer.writeln('True Negatives: ${metrics['trueNegatives']}');
-      buffer.writeln('False Negatives: ${metrics['falseNegatives']}');
-      buffer.writeln('');
-      buffer.writeln('Accuracy: ${(metrics['accuracy'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('Precision: ${(metrics['precision'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('Recall: ${(metrics['recall'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('F1 Score: ${(metrics['f1_score'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('False Accept Rate: ${(metrics['far'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('False Reject Rate: ${(metrics['frr'] * 100).toStringAsFixed(2)}%');
-      buffer.writeln('Current threshold: ${metrics['threshold']}');
-      
-      // Write to file
-      final file = File(path);
-      await file.writeAsString(buffer.toString());
-      
-      return path;
-    } catch (e) {
-      print('Error generating metrics log: $e');
-      return '';
-    }
-  }
-  
-  Future<List<Recognition>> processImage(
-    CameraImage frame,
-    CameraLensDirection cameraDirection,
-    bool isRegistering,
-    String personId,
   ) async {
     List<Recognition> recognitions = [];
     
@@ -278,231 +158,241 @@ class FaceDetectionService {
       
       Size imageSize = Size(image.width.toDouble(), image.height.toDouble());
       
-      // Convert to InputImage for ML Kit
-      final bytes = img.encodePng(image);
-      final inputImage = InputImage.fromBytes(
-        bytes: Uint8List.fromList(bytes),
-        metadata: InputImageMetadata(
-          size: imageSize,
-          rotation: InputImageRotation.rotation0deg,
-          format: InputImageFormat.nv21,
-          bytesPerRow: image.width,
-        ),
-      );
-      
-      // Process with face detector
-      final List<Face> faces = await _faceDetector.processImage(inputImage);
-      
       for (Face face in faces) {
-        final rect = face.boundingBox;
-        final Rect faceRect = Rect.fromLTRB(
-          rect.left.toDouble(),
-          rect.top.toDouble(),
-          rect.right.toDouble(),
-          rect.bottom.toDouble(),
-        );
-        
-        // Convert landmarks to Point objects for alignment
-        List<Point> landmarks = [];
-        if (face.landmarks.containsKey(FaceLandmarkType.leftEye)) {
-          final leftEye = face.landmarks[FaceLandmarkType.leftEye]!.position;
-          landmarks.add(Point(leftEye.x.toDouble(), leftEye.y.toDouble()));
-        }
-        if (face.landmarks.containsKey(FaceLandmarkType.rightEye)) {
-          final rightEye = face.landmarks[FaceLandmarkType.rightEye]!.position;
-          landmarks.add(Point(rightEye.x.toDouble(), rightEye.y.toDouble()));
-        }
-        if (face.landmarks.containsKey(FaceLandmarkType.noseBase)) {
-          final nose = face.landmarks[FaceLandmarkType.noseBase]!.position;
-          landmarks.add(Point(nose.x.toDouble(), nose.y.toDouble()));
-        }
-        if (face.landmarks.containsKey(FaceLandmarkType.leftMouth)) {
-          final leftMouth = face.landmarks[FaceLandmarkType.leftMouth]!.position;
-          landmarks.add(Point(leftMouth.x.toDouble(), leftMouth.y.toDouble()));
-        }
-        if (face.landmarks.containsKey(FaceLandmarkType.rightMouth)) {
-          final rightMouth = face.landmarks[FaceLandmarkType.rightMouth]!.position;
-          landmarks.add(Point(rightMouth.x.toDouble(), rightMouth.y.toDouble()));
-        }
-        
-        // Extract and preprocess the face region
-        img.Image faceImage = extractAndPreprocessFace(image!, faceRect, landmarks);
-        
-        // Assess face quality
-        double faceQuality = ImageService.assessImageQuality(faceImage);
-        
-        // Only proceed with recognition if face quality is acceptable
-        if (faceQuality >= MIN_QUALITY_THRESHOLD) {
-          // Log face quality
-          _updateFaceQualityHistory(personId, faceQuality);
+        try {
+          // Calculate face quality score
+          double qualityScore = FaceDetectorUtils.calculateFaceQualityScore(face, imageSize);
           
-          Recognition recognition = _recognizer!.recognize(faceImage, faceRect);
-          
-          // Add quality score to recognition
-          recognition.quality = faceQuality;
-          
-          // Log recognition in the logger
-          if (!isRegistering) {
-            await _logger.logRecognition(
-              personName: personId,
-              matchedName: recognition.label,
-              distance: recognition.distance,
-              qualityScore: faceQuality,
+          // Apply stricter face quality checks using the utility class
+          if (!FaceDetectorUtils.isFaceSuitableForRecognition(face, imageSize)) {
+            // Add a recognition with guidance message for feedback
+            String guidanceMessage = FaceDetectorUtils.getFaceAlignmentGuidance(face);
+            Recognition recognition = Recognition(
+              guidanceMessage, 
+              face.boundingBox, 
+              [], 
+              1.0
             );
+            recognition.quality = qualityScore;
+            recognitions.add(recognition);
+            continue;
           }
           
+          // Get expanded face rectangle with padding using utility
+          Rect paddedRect = FaceDetectorUtils.getExpandedFaceRect(face, imageSize);
+          
+          // Add safety checks for crop operation
+          if (paddedRect.left < 0 || paddedRect.top < 0 || 
+              paddedRect.right > image.width || paddedRect.bottom > image.height ||
+              paddedRect.width <= 0 || paddedRect.height <= 0) {
+            print('Warning: Invalid face crop rectangle');
+            continue;
+          }
+          
+          // Safely crop the face
+          img.Image croppedFace;
+          try {
+            croppedFace = img.copyCrop(
+              image, 
+              x: paddedRect.left.toInt(),
+              y: paddedRect.top.toInt(),
+              width: paddedRect.width.toInt(),
+              height: paddedRect.height.toInt()
+            );
+          } catch (e) {
+            print('Error cropping face, using dummy face: $e');
+            croppedFace = LocalEmergencyConverter.createDummyFace(112, 112);
+          }
+          
+          img.Image enhancedFace = ImageService.enhanceImage(croppedFace);
+          
+          Recognition recognition = recognizer.recognize(enhancedFace, face.boundingBox);
+          
+          // Add quality score to recognition
+          recognition.quality = qualityScore;
+          
+          // Improved confidence calculation
+          double confidence = (1 - recognition.distance) * 100;
+          confidence = confidence.clamp(0, 100);
+          
+          // Use consistent threshold for unknown faces (matching recognizer.dart)
+          if (recognition.distance > 0.15) {  // Changed from 0.6 to 0.15 to match RECOGNITION_THRESHOLD
+            recognition.label = "Unknown";
+          }
+          // Note: Don't modify label if it's already properly set by recognizer
+          
           recognitions.add(recognition);
-        } else {
-          print('Face quality too low: $faceQuality - skipping recognition');
-          Recognition lowQualityRecognition = Recognition("Low Quality", faceRect, [], 1.0);
-          lowQualityRecognition.quality = faceQuality;
-          recognitions.add(lowQualityRecognition);
+        } catch (e) {
+          print('Error processing face: $e');
+          continue;
         }
       }
     } catch (e) {
-      print('Error in processImage: $e');
+      print('Error in processRecognitions: $e');
+      _useEmergencyConverter = true; // Switch to emergency converter for future frames
     }
     
     return recognitions;
   }
   
-  img.Image extractAndPreprocessFace(img.Image image, Rect faceRect, List<Point> landmarks) {
-    try {
-      // If we have enough landmarks, use alignment
-      if (landmarks.length >= 2) {
-        return ImageService.alignFace(image, landmarks);
-      } else {
-        // Otherwise just crop without alignment
-        return cropAndEnhanceFace(image, faceRect);
-      }
-    } catch (e) {
-      print('Error in extractAndPreprocessFace: $e');
-      return cropAndEnhanceFace(image, faceRect);
-    }
-  }
-  
-  img.Image cropAndEnhanceFace(img.Image image, Rect faceRect) {
-    // Add padding to face rect
-    double padding = 0.2;
-    int left = (faceRect.left - faceRect.width * padding).round();
-    int top = (faceRect.top - faceRect.height * padding).round();
-    int width = (faceRect.width * (1 + 2 * padding)).round();
-    int height = (faceRect.height * (1 + 2 * padding)).round();
+  bool isFaceQualityGood(Face face) {
+    // Much more lenient face quality check for frontal faces
     
-    // Ensure coordinates are valid
-    left = left < 0 ? 0 : left;
-    top = top < 0 ? 0 : top;
-    width = left + width > image.width ? image.width - left : width;
-    height = top + height > image.height ? image.height - top : height;
+    // Check if face landmarks are detected (very lenient)
+    bool hasLandmarks = face.landmarks.length >= 1;  // Was checking for non-empty
     
-    if (width <= 0 || height <= 0) {
-      return image;
-    }
-    
-    // Crop the face region
-    img.Image cropped = img.copyCrop(image, x: left, y: top, width: width, height: height);
-    
-    // Enhance the cropped face
-    return ImageService.enhanceFaceImage(cropped);
-  }
-  
-  // Update face quality history for a person
-  void _updateFaceQualityHistory(String personId, double quality) {
-    if (!_faceQualityHistory.containsKey(personId)) {
-      _faceQualityHistory[personId] = [];
-    }
-    
-    // Add new quality score
-    _faceQualityHistory[personId]!.add(quality);
-    
-    // Keep only the last 10 scores
-    if (_faceQualityHistory[personId]!.length > 10) {
-      _faceQualityHistory[personId]!.removeAt(0);
-    }
-  }
-  
-  // Get average face quality for a person
-  double getAverageFaceQuality(String personId) {
-    if (!_faceQualityHistory.containsKey(personId) || 
-        _faceQualityHistory[personId]!.isEmpty) {
-      return 0.0;
-    }
-    
-    double sum = 0.0;
-    for (double quality in _faceQualityHistory[personId]!) {
-      sum += quality;
-    }
-    
-    return sum / _faceQualityHistory[personId]!.length;
-  }
-  
-  // Get adaptive recognition threshold based on face quality
-  double getAdaptiveThreshold(double faceQuality) {
-    // Base threshold
-    double baseThreshold = Recognizer.RECOGNITION_THRESHOLD;
-    
-    // Adjust threshold based on quality
-    if (faceQuality < 0.65) {
-      // More conservative threshold for lower quality
-      return baseThreshold - 0.05;
-    } else if (faceQuality > 0.85) {
-      // More lenient threshold for high quality
-      return baseThreshold + 0.05;
-    }
-    
-    return baseThreshold;
-  }
-  
-  Future<void> registerFace(CameraImage frame, CameraLensDirection cameraDirection, String name) async {
-    try {
-      List<Recognition> recognitions = await processImage(frame, cameraDirection, true, name);
+    // Much more lenient face angles (roll, pitch, yaw)
+    bool goodAngles = true;
+    if (face.headEulerAngleY != null && face.headEulerAngleZ != null && face.headEulerAngleX != null) {
+      // Much more lenient angle checks for frontal faces
+      bool goodYaw = face.headEulerAngleY!.abs() < 45;   // Was 15
+      bool goodRoll = face.headEulerAngleZ!.abs() < 45;  // Was 15
+      bool goodPitch = face.headEulerAngleX!.abs() < 45; // Was 15
       
-      if (recognitions.isNotEmpty) {
-        Recognition bestRecognition = recognitions[0];
-        
-        // Only register if quality is good enough
-        if (bestRecognition.quality >= 0.7) {
-          await _recognizer?.registerFaceInDB(name, bestRecognition.embeddings);
-          print('Face registered successfully with quality: ${bestRecognition.quality}');
-        } else {
-          print('Face quality too low for registration: ${bestRecognition.quality}');
-        }
-      } else {
-        print('No face detected for registration');
-      }
-    } catch (e) {
-      print('Error registering face: $e');
+      goodAngles = goodYaw && goodRoll && goodPitch;
+      
+      // Debug logging for angles
+      print('🔄 Head Angles: Yaw: ${face.headEulerAngleY!.toStringAsFixed(1)}°, Roll: ${face.headEulerAngleZ!.toStringAsFixed(1)}°, Pitch: ${face.headEulerAngleX!.toStringAsFixed(1)}°');
     }
+    
+    // More lenient eye requirements
+    bool eyesOpen = true;
+    if (face.leftEyeOpenProbability != null && face.rightEyeOpenProbability != null) {
+      eyesOpen = (face.leftEyeOpenProbability! > 0.3) && (face.rightEyeOpenProbability! > 0.3);  // Was 0.7
+      print('👀 Eyes: Left: ${face.leftEyeOpenProbability!.toStringAsFixed(2)}, Right: ${face.rightEyeOpenProbability!.toStringAsFixed(2)}');
+    }
+    
+    // More lenient smiling check
+    bool notSmiling = true;
+    if (face.smilingProbability != null) {
+      notSmiling = face.smilingProbability! < 0.9; // Was 0.7 - very lenient now
+      print('😊 Smile: ${face.smilingProbability!.toStringAsFixed(2)}');
+    }
+    
+    // More lenient face size check
+    bool goodSize = face.boundingBox.width > 50 && face.boundingBox.height > 50;  // Was 100
+    print('📏 Face Size: ${face.boundingBox.width.toInt()}x${face.boundingBox.height.toInt()}');
+    
+    // Debug overall result
+    bool result = hasLandmarks && goodAngles && eyesOpen && notSmiling && goodSize;
+    print('✅ Face Quality: ${result ? "GOOD" : "BAD"} (landmarks: $hasLandmarks, angles: $goodAngles, eyes: $eyesOpen, expression: $notSmiling, size: $goodSize)');
+    
+    return result;
+  }
+  
+  Future<void> registerFace(String name, List<double> embeddings) async {
+    recognizer.registerFaceInDB(name, embeddings);
   }
   
   Future<List<String>> getRegisteredUsers() async {
-    return await _recognizer?.getRegisteredUsers() ?? [];
+    return await recognizer.getRegisteredUsers();
   }
   
-  Future<void> deleteUser(String userName) async {
-    await _recognizer?.deleteUser(userName);
-  }
-  
-  Future<void> clearAllData() async {
-    await _recognizer?.clearAllData();
-  }
-  
-  // Register face using pre-processed embeddings
-  Future<void> registerFaceEmbeddings(String name, List<double> embeddings) async {
-    try {
-      // Quality check is not needed since embeddings are already processed
-      await _recognizer?.registerFaceInDB(name, embeddings);
-      print('Face registered successfully with pre-processed embeddings');
-    } catch (e) {
-      print('Error registering face with embeddings: $e');
-    }
+  Future<void> deleteUser(String name) async {
+    await recognizer.deleteUser(name);
   }
   
   void dispose() {
-    _faceDetector.close();
-    _recognizer?.close();
+    faceDetector.close();
   }
-} 
+  
+  void registerFaceEmbeddings(String name, List<double> embeddings) {
+    recognizer.registerFaceInDB(name, embeddings);
+  }
+  
+  String getAccuracyReport() {
+    final RecognitionLogger logger = RecognitionLogger();
+    final metrics = logger.getAccuracyMetrics();
+    
+    double accuracy = metrics['accuracy'] ?? 0.0;
+    double far = metrics['far'] ?? 0.0;
+    double frr = metrics['frr'] ?? 0.0;
+    int samples = metrics['samples'] ?? 0;
+    
+    if (samples == 0) {
+      return "No recognition data available yet";
+    }
+    
+    return "Accuracy: ${(accuracy * 100).toStringAsFixed(1)}% | FAR: ${(far * 100).toStringAsFixed(1)}% | FRR: ${(frr * 100).toStringAsFixed(1)}% | Samples: $samples";
+  }
+  
+  void showFaceRecognitionStats() {
+    final RecognitionLogger logger = RecognitionLogger();
+    final metrics = logger.getAccuracyMetrics();
+    
+    print('\n----------------------------------------');
+    print('📊 FACE RECOGNITION STATISTICS 📊');
+    print('----------------------------------------');
+    print('Accuracy: ${(metrics['accuracy'] * 100).toStringAsFixed(2)}%');
+    print('Precision: ${(metrics['precision'] * 100).toStringAsFixed(2)}%');
+    print('Recall: ${(metrics['recall'] * 100).toStringAsFixed(2)}%');
+    print('F1 Score: ${(metrics['f1_score'] * 100).toStringAsFixed(2)}%');
+    print('False Accept Rate: ${(metrics['far'] * 100).toStringAsFixed(2)}%');
+    print('False Reject Rate: ${(metrics['frr'] * 100).toStringAsFixed(2)}%');
+    print('Total Samples: ${metrics['samples']}');
+    print('Current Threshold: ${metrics['threshold']}');
+    print('----------------------------------------\n');
+  }
+  
+  Future<String> exportROCData() async {
+    try {
+      final RecognitionLogger logger = RecognitionLogger();
+      final csvData = await logger.exportROCDataAsCSV();
+      
+      // Save to file
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final File file = File('${appDocDir.path}/roc_data_$timestamp.csv');
+      
+      await file.writeAsString(csvData);
+      
+      print('ROC data exported to: ${file.path}');
+      return file.path;
+    } catch (e) {
+      print('Error exporting ROC data: $e');
+      return '';
+    }
+  }
+  
+  Future<String> generateMetricsLog() async {
+    try {
+      final RecognitionLogger logger = RecognitionLogger();
+      final metrics = logger.getAccuracyMetrics();
+      
+      // Format metrics as JSON with nice indentation
+      String metricsJson = '''
+{
+  "accuracy": ${metrics['accuracy']},
+  "precision": ${metrics['precision']},
+  "recall": ${metrics['recall']},
+  "f1_score": ${metrics['f1_score']},
+  "false_accept_rate": ${metrics['far']},
+  "false_reject_rate": ${metrics['frr']},
+  "samples": ${metrics['samples']},
+  "threshold": ${metrics['threshold']},
+  "true_positives": ${metrics['truePositives']},
+  "false_positives": ${metrics['falsePositives']},
+  "true_negatives": ${metrics['trueNegatives']},
+  "false_negatives": ${metrics['falseNegatives']},
+  "timestamp": "${DateTime.now().toIso8601String()}"
+}
+''';
+      
+      // Save to file
+      final Directory appDocDir = await getApplicationDocumentsDirectory();
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final File file = File('${appDocDir.path}/face_metrics_$timestamp.json');
+      
+      await file.writeAsString(metricsJson);
+      
+      print('Metrics log saved to: ${file.path}');
+      return file.path;
+    } catch (e) {
+      print('Error generating metrics log: $e');
+      return '';
+    }
+  }
+}
 
 double max(double a, double b) {
   return a > b ? a : b;

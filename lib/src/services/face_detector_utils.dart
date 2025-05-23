@@ -7,32 +7,40 @@ class FaceDetectorUtils {
     final double faceWidthRatio = face.boundingBox.width / imageSize.width;
     final double faceHeightRatio = face.boundingBox.height / imageSize.height;
     
-    final bool goodSize = faceWidthRatio > 0.15 && faceHeightRatio > 0.15;
+    final bool goodSize = faceWidthRatio > 0.1 && faceHeightRatio > 0.1;
     
     bool goodAngles = true;
     if (face.headEulerAngleY != null && 
         face.headEulerAngleZ != null && 
         face.headEulerAngleX != null) {
-      final bool goodYaw = face.headEulerAngleY!.abs() < 15;
+      final bool goodYaw = face.headEulerAngleY!.abs() < 35;
       
-      final bool goodRoll = face.headEulerAngleZ!.abs() < 15;
-      final bool goodPitch = face.headEulerAngleX!.abs() < 15;
+      final bool goodRoll = face.headEulerAngleZ!.abs() < 35;
+      final bool goodPitch = face.headEulerAngleX!.abs() < 35;
       
       goodAngles = goodYaw && goodRoll && goodPitch;
     }
     
     bool eyesOpen = true;
     if (face.leftEyeOpenProbability != null && face.rightEyeOpenProbability != null) {
-      eyesOpen = (face.leftEyeOpenProbability! > 0.7) && 
-                 (face.rightEyeOpenProbability! > 0.7);
+      eyesOpen = (face.leftEyeOpenProbability! > 0.5) && 
+                 (face.rightEyeOpenProbability! > 0.5);
     }
     
     bool neutralExpression = true;
     if (face.smilingProbability != null) {
-      neutralExpression = face.smilingProbability! < 0.7;
+      neutralExpression = face.smilingProbability! < 0.8;
     }
     
-    final bool hasLandmarks = face.landmarks.length >= 3;
+    final bool hasLandmarks = face.landmarks.length >= 1;
+    
+    print('📊 Face Quality Check:');
+    print('   Size: $goodSize (w: ${faceWidthRatio.toStringAsFixed(2)}, h: ${faceHeightRatio.toStringAsFixed(2)})');
+    print('   Angles: $goodAngles (yaw: ${face.headEulerAngleY?.toStringAsFixed(1)}°, roll: ${face.headEulerAngleZ?.toStringAsFixed(1)}°, pitch: ${face.headEulerAngleX?.toStringAsFixed(1)}°)');
+    print('   Eyes: $eyesOpen (left: ${face.leftEyeOpenProbability?.toStringAsFixed(2)}, right: ${face.rightEyeOpenProbability?.toStringAsFixed(2)})');
+    print('   Expression: $neutralExpression (smile: ${face.smilingProbability?.toStringAsFixed(2)})');
+    print('   Landmarks: $hasLandmarks (count: ${face.landmarks.length})');
+    print('   Overall: ${goodSize && goodAngles && eyesOpen && neutralExpression && hasLandmarks}');
     
     return goodSize && goodAngles && eyesOpen && neutralExpression && hasLandmarks;
   }
@@ -43,36 +51,36 @@ class FaceDetectorUtils {
     final double faceWidthRatio = face.boundingBox.width / imageSize.width;
     final double faceHeightRatio = face.boundingBox.height / imageSize.height;
     
-    if (faceWidthRatio < 0.15) {
-      score -= 30 * (0.15 - faceWidthRatio) / 0.15;
+    if (faceWidthRatio < 0.1) {
+      score -= 20 * (0.1 - faceWidthRatio) / 0.1;
     }
     
-    if (faceHeightRatio < 0.15) {
-      score -= 30 * (0.15 - faceHeightRatio) / 0.15;
+    if (faceHeightRatio < 0.1) {
+      score -= 20 * (0.1 - faceHeightRatio) / 0.1;
     }
     
     if (face.headEulerAngleY != null) {
-      score -= min(30, face.headEulerAngleY!.abs() * 2);
+      score -= min(15, face.headEulerAngleY!.abs() * 0.5);
     }
     
     if (face.headEulerAngleZ != null) {
-      score -= min(30, face.headEulerAngleZ!.abs() * 2);
+      score -= min(15, face.headEulerAngleZ!.abs() * 0.5);
     }
     
     if (face.headEulerAngleX != null) {
-      score -= min(30, face.headEulerAngleX!.abs() * 2);
+      score -= min(15, face.headEulerAngleX!.abs() * 0.5);
     }
     
     if (face.leftEyeOpenProbability != null) {
-      score -= 20 * (1 - face.leftEyeOpenProbability!);
+      score -= 10 * (1 - face.leftEyeOpenProbability!);
     }
     
     if (face.rightEyeOpenProbability != null) {
-      score -= 20 * (1 - face.rightEyeOpenProbability!);
+      score -= 10 * (1 - face.rightEyeOpenProbability!);
     }
     
-    if (face.smilingProbability != null && face.smilingProbability! > 0.7) {
-      score -= 10 * (face.smilingProbability! - 0.7) / 0.3;
+    if (face.smilingProbability != null && face.smilingProbability! > 0.8) {
+      score -= 5 * (face.smilingProbability! - 0.8) / 0.2;
     }
     
     return score.clamp(0, 100);
@@ -93,34 +101,32 @@ class FaceDetectorUtils {
   }
   
   static String getFaceAlignmentGuidance(Face face) {
-    if (face.headEulerAngleY != null && face.headEulerAngleY!.abs() > 15) {
+    if (face.headEulerAngleY != null && face.headEulerAngleY!.abs() > 30) {
       return face.headEulerAngleY! > 0 
-          ? "Turn face left" 
-          : "Turn face right";
+          ? "Turn face slightly left" 
+          : "Turn face slightly right";
     }
     
-    if (face.headEulerAngleZ != null && face.headEulerAngleZ!.abs() > 15) {
-      return face.headEulerAngleZ! > 0 
-          ? "Straighten your head" 
-          : "Straighten your head";
+    if (face.headEulerAngleZ != null && face.headEulerAngleZ!.abs() > 30) {
+      return "Straighten your head";
     }
     
-    if (face.headEulerAngleX != null && face.headEulerAngleX!.abs() > 15) {
+    if (face.headEulerAngleX != null && face.headEulerAngleX!.abs() > 30) {
       return face.headEulerAngleX! > 0 
-          ? "Lower your chin" 
-          : "Raise your chin";
+          ? "Lower your chin slightly" 
+          : "Raise your chin slightly";
     }
     
     if (face.leftEyeOpenProbability != null && 
         face.rightEyeOpenProbability != null &&
-        (face.leftEyeOpenProbability! < 0.7 || face.rightEyeOpenProbability! < 0.7)) {
+        (face.leftEyeOpenProbability! < 0.5 || face.rightEyeOpenProbability! < 0.5)) {
       return "Open your eyes";
     }
     
-    if (face.smilingProbability != null && face.smilingProbability! > 0.7) {
+    if (face.smilingProbability != null && face.smilingProbability! > 0.8) {
       return "Neutral expression please";
     }
     
-    return "Perfect";
+    return "Perfect - Hold steady";
   }
 } 

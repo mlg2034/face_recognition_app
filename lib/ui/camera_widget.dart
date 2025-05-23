@@ -447,7 +447,7 @@ class _CameraWidgetState extends State<CameraWidget>
                 // Delay slightly to let dialog close
                 await Future.delayed(const Duration(milliseconds: 200));
                 // Show all statistics including ROC curve
-                await faceDetectionService.showFaceRecognitionStats();
+                faceDetectionService.showFaceRecognitionStats();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Statistics displayed in console logs'))
                 );
