@@ -4,25 +4,25 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:realtime_face_recognition/ui/camera_widget.dart';
 import 'package:realtime_face_recognition/src/logic/turnstile_bloc/turnstile_bloc.dart';
 
-class FaceRecognitionScreen extends StatefulWidget {
+class AdminCameraScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
 
-  const FaceRecognitionScreen({super.key, required this.cameras});
+  const AdminCameraScreen({super.key, required this.cameras});
 
   @override
-  State<FaceRecognitionScreen> createState() => _FaceRecognitionScreenState();
+  State<AdminCameraScreen> createState() => _AdminCameraScreenState();
 }
 
-class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
+class _AdminCameraScreenState extends State<AdminCameraScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Face Recognition',
+          'Admin Camera - Registration Mode',
           style: TextStyle(color: Colors.white),
         ),
-        backgroundColor: Colors.blue,
+        backgroundColor: Colors.orange,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: BlocProvider(
@@ -30,9 +30,9 @@ class _FaceRecognitionScreenState extends State<FaceRecognitionScreen> {
         child: SizedBox(
           width: MediaQuery.of(context).size.width,
           height: MediaQuery.of(context).size.height,
-          child: CameraWidget(cameras: widget.cameras, isAdminMode: false),
+          child: CameraWidget(cameras: widget.cameras, isAdminMode: true),
         ),
       ),
     );
   }
-}
+} 

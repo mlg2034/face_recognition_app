@@ -19,8 +19,9 @@ import '../core/app/ui/ui.dart';
 
 class CameraWidget extends StatefulWidget {
   final List<CameraDescription> cameras;
+  final bool isAdminMode;
 
-  const CameraWidget({Key? key, required this.cameras}) : super(key: key);
+  const CameraWidget({Key? key, required this.cameras, this.isAdminMode = false}) : super(key: key);
 
   @override
   _CameraWidgetState createState() => _CameraWidgetState();
@@ -163,7 +164,7 @@ class _CameraWidgetState extends State<CameraWidget>
   void _callTurnstile(String userName) {
     print('🚪 CALLING TURNSTILE for user: $userName');
 
-    // context.read<TurnstileBloc>().add(CallTurnstile());
+    context.read<TurnstileBloc>().add(CallTurnstile());
     
     setState(() {
       turnstileAccessGranted = true;
@@ -519,47 +520,48 @@ class _CameraWidgetState extends State<CameraWidget>
                 ),
               ),
             
-            // Add control buttons if needed
-            Positioned(
-              bottom: 20,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildControlButton(
-                    icon: Icons.cached,
-                    label: "Switch",
-                    onPressed: () async {
-                      await cameraService.toggleCameraDirection(widget.cameras);
-                      if (mounted) {
-                        setState(() {});
-                        startImageStream();
-                      }
-                    },
-                  ),
-                  _buildControlButton(
-                    icon: Icons.people,
-                    label: "Users",
-                    onPressed: navigateToRegisteredUsers,
-                  ),
-                  _buildControlButton(
-                    icon: Icons.face_retouching_natural,
-                    label: "Register",
-                    onPressed: () {
-                      setState(() {
-                        register = true;
-                      });
-                    },
-                  ),
-                  _buildControlButton(
-                    icon: Icons.bar_chart,
-                    label: "Stats",
-                    onPressed: _showFaceRecognitionStats,
-                  ),
-                ],
+            // Add control buttons if in admin mode
+            if (widget.isAdminMode)
+              Positioned(
+                bottom: 20,
+                left: 0,
+                right: 0,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildControlButton(
+                      icon: Icons.cached,
+                      label: "Switch",
+                      onPressed: () async {
+                        await cameraService.toggleCameraDirection(widget.cameras);
+                        if (mounted) {
+                          setState(() {});
+                          startImageStream();
+                        }
+                      },
+                    ),
+                    _buildControlButton(
+                      icon: Icons.people,
+                      label: "Users",
+                      onPressed: navigateToRegisteredUsers,
+                    ),
+                    _buildControlButton(
+                      icon: Icons.face_retouching_natural,
+                      label: "Register",
+                      onPressed: () {
+                        setState(() {
+                          register = true;
+                        });
+                      },
+                    ),
+                    _buildControlButton(
+                      icon: Icons.bar_chart,
+                      label: "Stats",
+                      onPressed: _showFaceRecognitionStats,
+                    ),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),

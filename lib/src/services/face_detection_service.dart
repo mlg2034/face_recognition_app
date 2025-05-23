@@ -313,10 +313,10 @@ class FaceDetectionService {
     double far = metrics['far'] ?? 0.0;
     double frr = metrics['frr'] ?? 0.0;
     int samples = metrics['samples'] ?? 0;
-    
-    if (samples == 0) {
-      return "No recognition data available yet";
-    }
+    //
+    // if (samples == 0) {
+    //   return "No recognition data available yet";
+    // }
     
     return "Accuracy: ${(accuracy * 100).toStringAsFixed(1)}% | FAR: ${(far * 100).toStringAsFixed(1)}% | FRR: ${(frr * 100).toStringAsFixed(1)}% | Samples: $samples";
   }

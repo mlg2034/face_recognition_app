@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:logger/logger.dart';
 import 'package:realtime_face_recognition/firebase_options.dart';
-import 'package:realtime_face_recognition/src/screens/face_recognition_screen.dart';
+import 'package:realtime_face_recognition/src/screens/home_screen.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/recognition_logger.dart';
 
@@ -56,7 +56,7 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: FaceRecognitionScreen(cameras: cameras),
+      home: HomeScreen(cameras: cameras),
     );
   }
 }

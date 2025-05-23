@@ -50,6 +50,7 @@ dependencies:
   fl_chart: ^0.65.0
   csv: ^5.1.1
   share_plus: ^7.2.2
+  pin_code_fields: ^8.0.1
 
 dev_dependencies:
   flutter_test:

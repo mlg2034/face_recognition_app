@@ -40,6 +40,6 @@ class BaseNetworkService {
 }
 
 class _AppConstant {
-  static const baseUrl = 'http://192.168.1.72:5000';
+  static const baseUrl = 'http://192.168.0.106:5000';
   static const token = 'TURNSTILE_TOKEN';
 }
