@@ -162,11 +162,9 @@ class _CameraWidgetState extends State<CameraWidget>
   
   void _callTurnstile(String userName) {
     print('🚪 CALLING TURNSTILE for user: $userName');
+
+    // context.read<TurnstileBloc>().add(CallTurnstile());
     
-    // Get the TurnstileBloc from context and call turnstile
-    context.read<TurnstileBloc>().add(CallTurnstile());
-    
-    // Set access granted status for UI feedback
     setState(() {
       turnstileAccessGranted = true;
     });
