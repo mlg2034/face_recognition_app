@@ -299,6 +299,11 @@ class Recognizer {
     return _normalizeEmbedding(sum);
   }
 
+  // Check if a user with the given name is already registered
+  bool isUserRegistered(String name) {
+    return registered.containsKey(name.trim());
+  }
+
   void registerFaceInDB(String name, List<double> embedding) async {
     if (registered.containsKey(name)) {
       var existing = registered[name]!.embeddings;

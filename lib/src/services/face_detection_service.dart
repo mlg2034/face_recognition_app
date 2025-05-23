@@ -288,6 +288,11 @@ class FaceDetectionService {
     return await recognizer.getRegisteredUsers();
   }
   
+  // Check if a user is already registered
+  bool isUserRegistered(String name) {
+    return recognizer.isUserRegistered(name);
+  }
+  
   Future<void> deleteUser(String name) async {
     await recognizer.deleteUser(name);
   }

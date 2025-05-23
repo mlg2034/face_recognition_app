@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:realtime_face_recognition/src/services/camera_service.dart';
@@ -12,6 +13,7 @@ import 'package:realtime_face_recognition/ui/face_detector_painter.dart';
 import 'package:realtime_face_recognition/src/services/image_service.dart';
 import 'package:realtime_face_recognition/src/services/isolate_utils.dart';
 import 'package:realtime_face_recognition/src/services/emergency_image_converter.dart' as emergency;
+import 'package:realtime_face_recognition/src/logic/turnstile_bloc/turnstile_bloc.dart';
 
 import '../core/app/ui/ui.dart';
 
@@ -34,6 +36,13 @@ class _CameraWidgetState extends State<CameraWidget>
   CameraImage? frame;
   bool register = false;
   List<Recognition> recognitions = [];
+  
+  // Turnstile control variables
+  String? lastRecognizedUser;
+  DateTime? lastRecognitionTime;
+  bool turnstileAccessGranted = false;
+  static const Duration RECOGNITION_COOLDOWN = Duration(seconds: 5); // Prevent multiple calls
+  static const Duration ACCESS_DISPLAY_DURATION = Duration(seconds: 3); // How long to show access granted
 
   @override
   void initState() {
@@ -107,7 +116,69 @@ class _CameraWidgetState extends State<CameraWidget>
         navigateToFaceRegistration(results.first);
         register = false;
       }
+
+      _checkForSuccessfulRecognition(results);
     }
+  }
+
+  void _checkForSuccessfulRecognition(List<Recognition> results) {
+    final now = DateTime.now();
+    
+    // Check cooldown period to prevent multiple rapid calls
+    if (lastRecognitionTime != null && 
+        now.difference(lastRecognitionTime!) < RECOGNITION_COOLDOWN) {
+      return;
+    }
+    
+    for (Recognition recognition in results) {
+      // Check if this is a successful recognition (not Unknown, not guidance messages)
+      bool isSuccessfulRecognition = recognition.label != "Unknown" && 
+                                    recognition.label != "No faces registered" &&
+                                    !recognition.label.contains("Look") &&
+                                    !recognition.label.contains("Move") &&
+                                    !recognition.label.contains("Quality") &&
+                                    recognition.distance <= 0.15; // Use our strict threshold
+      
+      if (isSuccessfulRecognition) {
+        // Extract the name from the label (it might have confidence percentage)
+        String recognizedName = recognition.label;
+        if (recognizedName.contains('(')) {
+          recognizedName = recognizedName.split('(')[0].trim();
+        }
+        
+        print('🎯 SUCCESSFUL RECOGNITION: $recognizedName (distance: ${recognition.distance.toStringAsFixed(4)})');
+        
+        // Call turnstile if this is a new recognition or different user
+        if (lastRecognizedUser != recognizedName) {
+          _callTurnstile(recognizedName);
+          lastRecognizedUser = recognizedName;
+          lastRecognitionTime = now;
+        }
+        
+        break; // Only process the first successful recognition
+      }
+    }
+  }
+  
+  void _callTurnstile(String userName) {
+    print('🚪 CALLING TURNSTILE for user: $userName');
+    
+    // Get the TurnstileBloc from context and call turnstile
+    context.read<TurnstileBloc>().add(CallTurnstile());
+    
+    // Set access granted status for UI feedback
+    setState(() {
+      turnstileAccessGranted = true;
+    });
+    
+    // Clear access granted status after some time
+    Future.delayed(ACCESS_DISPLAY_DURATION, () {
+      if (mounted) {
+        setState(() {
+          turnstileAccessGranted = false;
+        });
+      }
+    });
   }
 
   void navigateToFaceRegistration(Recognition recognition) async {
@@ -247,7 +318,6 @@ class _CameraWidgetState extends State<CameraWidget>
       );
     }
 
-    // Calculate the size to maintain aspect ratio
     final double screenAspectRatio = size.width / size.height;
     final double cameraAspectRatio = cameraService.controller!.value.aspectRatio;
     
@@ -255,132 +325,245 @@ class _CameraWidgetState extends State<CameraWidget>
     final double previewHeight;
     
     if (screenAspectRatio < cameraAspectRatio) {
-      // Screen is narrower than camera feed
       previewWidth = size.width;
       previewHeight = size.width / cameraAspectRatio;
     } else {
-      // Screen is wider than camera feed
       previewHeight = size.height;
       previewWidth = size.height * cameraAspectRatio;
     }
 
-    return Container(
-      color: Colors.black,
-      width: size.width,
-      height: size.height,
-      child: Stack(
-        children: [
-          // Camera preview
-          Center(
-            child: SizedBox(
-              width: previewWidth,
-              height: previewHeight,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CameraPreview(cameraService.controller!),
-              ),
-            ),
-          ),
-          
-          // Face detection overlay
-          SizedBox(
-            width: size.width,
-            height: size.height,
-            child: buildResult(),
-          ),
-          
-          // Status bar with metrics at the top
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
-            left: 10,
-            right: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+    return BlocListener<TurnstileBloc, TurnstileState>(
+      listener: (context, state) {
+        // Handle turnstile state changes
+        if (state is TurnstileSuccess) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
                 children: [
-                  if (recognitions.isNotEmpty)
-                    ..._buildMetricsWidgets(),
-                  if (recognitions.isEmpty)
-                    const Text('No face detected', style: TextStyle(color: Colors.white70)),
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text('🚪 Turnstile opened for $lastRecognizedUser'),
                 ],
               ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
             ),
-          ),
-          
-          // Accuracy metrics bar at the bottom
-          Positioned(
-            bottom: 80, // Above the control buttons
-            left: 10,
-            right: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.6),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+          );
+        } else if (state is TurnstileError) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      faceDetectionService.getAccuracyReport(),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
+                  const Icon(Icons.error, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text('❌ Turnstile error: ${state.error}'),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      },
+      child: Container(
+        color: Colors.black,
+        width: size.width,
+        height: size.height,
+        child: Stack(
+          children: [
+            // Camera preview
+            Center(
+              child: SizedBox(
+                width: previewWidth,
+                height: previewHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: CameraPreview(cameraService.controller!),
+                ),
+              ),
+            ),
+            
+            // Face detection overlay
+            SizedBox(
+              width: size.width,
+              height: size.height,
+              child: buildResult(),
+            ),
+            
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 10,
+              left: 10,
+              right: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    if (recognitions.isNotEmpty)
+                      // ..._buildMetricsWidgets(),
+                    if (recognitions.isEmpty)
+                      const Text('No face detected', style: TextStyle(color: Colors.white70)),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Accuracy metrics bar at the bottom
+            Positioned(
+              bottom: 80, // Above the control buttons
+              left: 10,
+              right: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        faceDetectionService.getAccuracyReport(),
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Turnstile Status Indicator with BLoC
+            BlocBuilder<TurnstileBloc, TurnstileState>(
+              builder: (context, turnstileState) {
+                return Positioned(
+                  bottom: 150, // Above control buttons and metrics
+                  left: 20,
+                  right: 20,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _getTurnstileStatusColor(turnstileState).withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(25),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _getTurnstileStatusIcon(turnstileState),
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _getTurnstileStatusText(turnstileState),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            
+            // Success Recognition Indicator (temporary)
+            if (turnstileAccessGranted)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 80,
+                left: 20,
+                right: 20,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(25),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.white, size: 24),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Access Granted: $lastRecognizedUser',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            
+            // Add control buttons if needed
+            Positioned(
+              bottom: 20,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildControlButton(
+                    icon: Icons.cached,
+                    label: "Switch",
+                    onPressed: () async {
+                      await cameraService.toggleCameraDirection(widget.cameras);
+                      if (mounted) {
+                        setState(() {});
+                        startImageStream();
+                      }
+                    },
+                  ),
+                  _buildControlButton(
+                    icon: Icons.people,
+                    label: "Users",
+                    onPressed: navigateToRegisteredUsers,
+                  ),
+                  _buildControlButton(
+                    icon: Icons.face_retouching_natural,
+                    label: "Register",
+                    onPressed: () {
+                      setState(() {
+                        register = true;
+                      });
+                    },
+                  ),
+                  _buildControlButton(
+                    icon: Icons.bar_chart,
+                    label: "Stats",
+                    onPressed: _showFaceRecognitionStats,
                   ),
                 ],
               ),
             ),
-          ),
-          
-          // Add control buttons if needed
-          Positioned(
-            bottom: 20,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildControlButton(
-                  icon: Icons.cached,
-                  label: "Switch",
-                  onPressed: () async {
-                    await cameraService.toggleCameraDirection(widget.cameras);
-                    if (mounted) {
-                      setState(() {});
-                      startImageStream();
-                    }
-                  },
-                ),
-                _buildControlButton(
-                  icon: Icons.people,
-                  label: "Users",
-                  onPressed: navigateToRegisteredUsers,
-                ),
-                _buildControlButton(
-                  icon: Icons.face_retouching_natural,
-                  label: "Register",
-                  onPressed: () {
-                    setState(() {
-                      register = true;
-                    });
-                  },
-                ),
-                _buildControlButton(
-                  icon: Icons.bar_chart,
-                  label: "Stats",
-                  onPressed: _showFaceRecognitionStats,
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -574,5 +757,51 @@ class _CameraWidgetState extends State<CameraWidget>
         ],
       ),
     ];
+  }
+
+  Color _getTurnstileStatusColor(TurnstileState state) {
+    switch (state.runtimeType) {
+      case TurnstileInitial:
+        return Colors.grey;
+      case TurnstileLoading:
+        return Colors.orange;
+      case TurnstileSuccess:
+        return Colors.green;
+      case TurnstileError:
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getTurnstileStatusIcon(TurnstileState state) {
+    switch (state.runtimeType) {
+      case TurnstileInitial:
+        return Icons.door_front_door;
+      case TurnstileLoading:
+        return Icons.hourglass_empty;
+      case TurnstileSuccess:
+        return Icons.lock_open;
+      case TurnstileError:
+        return Icons.error;
+      default:
+        return Icons.door_front_door;
+    }
+  }
+
+  String _getTurnstileStatusText(TurnstileState state) {
+    switch (state.runtimeType) {
+      case TurnstileInitial:
+        return 'Turnstile Ready';
+      case TurnstileLoading:
+        return 'Opening...';
+      case TurnstileSuccess:
+        return 'Access Granted';
+      case TurnstileError:
+        final errorState = state as TurnstileError;
+        return 'Error: ${errorState.error}';
+      default:
+        return 'Turnstile Status';
+    }
   }
 }
