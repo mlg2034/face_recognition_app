@@ -22,6 +22,7 @@ class FaceRegistrationScreen extends StatefulWidget {
 
 class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
   final TextEditingController textEditingController = TextEditingController();
+  final FocusNode textFieldFocusNode = FocusNode();
   bool isRegistering = false;
   bool isNameTaken = false;
   String? nameErrorText;
@@ -31,12 +32,18 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
     super.initState();
     // Add listener to check name availability in real-time
     textEditingController.addListener(_checkNameAvailability);
+    
+    // Ensure keyboard opens after the screen is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      textFieldFocusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     textEditingController.removeListener(_checkNameAvailability);
     textEditingController.dispose();
+    textFieldFocusNode.dispose();
     super.dispose();
   }
 
@@ -64,7 +71,11 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
         title: const Text("Face Registration"),
         backgroundColor: Colors.blue,
       ),
+      resizeToAvoidBottomInset: true,
       body: SingleChildScrollView(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
         child: Padding(
           padding: const EdgeInsets.all(20.0),
           child: Column(
@@ -93,6 +104,22 @@ class _FaceRegistrationScreenState extends State<FaceRegistrationScreen> {
               const SizedBox(height: 15),
               TextField(
                 controller: textEditingController,
+                focusNode: textFieldFocusNode,
+                autofocus: true,
+                keyboardType: TextInputType.text,
+                textInputAction: TextInputAction.done,
+                onTap: () {
+                  // Ensure keyboard opens when tapped
+                  if (!textFieldFocusNode.hasFocus) {
+                    textFieldFocusNode.requestFocus();
+                  }
+                },
+                onSubmitted: (value) {
+                  // Handle done button press
+                  if (!isNameTaken && value.trim().isNotEmpty && !isRegistering) {
+                    _registerFace();
+                  }
+                },
                 decoration: InputDecoration(
                   fillColor: Colors.white, 
                   filled: true,
