@@ -4,3 +4,5 @@ part of 'turnstile_bloc.dart';
 sealed class TurnstileEvent {}
 
 class CallTurnstile extends TurnstileEvent{}
+
+class ResetTurnstile extends TurnstileEvent{}

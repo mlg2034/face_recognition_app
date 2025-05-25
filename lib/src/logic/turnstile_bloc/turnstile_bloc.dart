@@ -12,6 +12,7 @@ class TurnstileBloc extends Bloc<TurnstileEvent, TurnstileState> {
 
   TurnstileBloc() : super(TurnstileInitial()) {
     on<CallTurnstile>(_callTurnstile);
+    on<ResetTurnstile>(_resetTurnstile);
   }
 
   Future<void> _callTurnstile(
@@ -21,8 +22,22 @@ class TurnstileBloc extends Bloc<TurnstileEvent, TurnstileState> {
       await _turnstileNetworkService.callTurnstile();
 
       emit(TurnstileSuccess());
+      
+      await Future.delayed(const Duration(seconds: 3));
+      if (!emit.isDone) {
+        emit(TurnstileInitial());
+      }
     } catch (exception) {
       emit(TurnstileError(exception.toString()));
+      
+      await Future.delayed(const Duration(seconds: 5));
+      if (!emit.isDone) {
+        emit(TurnstileInitial());
+      }
     }
+  }
+  
+  void _resetTurnstile(ResetTurnstile event, Emitter<TurnstileState> emit) {
+    emit(TurnstileInitial());
   }
 }

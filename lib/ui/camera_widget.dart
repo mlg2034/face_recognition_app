@@ -42,7 +42,7 @@ class _CameraWidgetState extends State<CameraWidget>
   String? lastRecognizedUser;
   DateTime? lastRecognitionTime;
   bool turnstileAccessGranted = false;
-  static const Duration RECOGNITION_COOLDOWN = Duration(seconds: 5); // Prevent multiple calls
+  static const Duration RECOGNITION_COOLDOWN = Duration(seconds: 5); // Deprecated - using smart BLoC-based logic now
   static const Duration ACCESS_DISPLAY_DURATION = Duration(seconds: 3); // How long to show access granted
 
   @override
@@ -124,10 +124,16 @@ class _CameraWidgetState extends State<CameraWidget>
 
   void _checkForSuccessfulRecognition(List<Recognition> results) {
     final now = DateTime.now();
+    final turnstileState = context.read<TurnstileBloc>().state;
     
-    // Check cooldown period to prevent multiple rapid calls
+    // Проверяем, что турникет не в процессе обработки запроса
+    if (turnstileState is TurnstileLoading) {
+      return; // Не отправляем новые запросы пока идет загрузка
+    }
+    
+    // Базовый cooldown для предотвращения слишком частых запросов (сокращен до 2 секунд)
     if (lastRecognitionTime != null && 
-        now.difference(lastRecognitionTime!) < RECOGNITION_COOLDOWN) {
+        now.difference(lastRecognitionTime!) < const Duration(seconds: 2)) {
       return;
     }
     
@@ -148,12 +154,23 @@ class _CameraWidgetState extends State<CameraWidget>
         }
         
         print('🎯 SUCCESSFUL RECOGNITION: $recognizedName (distance: ${recognition.distance.toStringAsFixed(4)})');
+        print('🔄 Current turnstile state: ${turnstileState.runtimeType}');
         
-        // Call turnstile if this is a new recognition or different user
-        if (lastRecognizedUser != recognizedName) {
+        // Разрешаем новый вызов турникета только если:
+        // 1. Турникет в состоянии Initial (готов к новому запросу)
+        // 2. Прошло минимальное время cooldown
+        // 3. Это новый пользователь или достаточно времени прошло для того же пользователя
+        bool canCallTurnstile = turnstileState is TurnstileInitial &&
+                              (lastRecognizedUser != recognizedName || 
+                               lastRecognitionTime == null ||
+                               now.difference(lastRecognitionTime!) > const Duration(seconds: 3));
+        
+        if (canCallTurnstile) {
           _callTurnstile(recognizedName);
           lastRecognizedUser = recognizedName;
           lastRecognitionTime = now;
+        } else {
+          print('⏳ Turnstile call skipped - State: ${turnstileState.runtimeType}, Last user: $lastRecognizedUser, Time since last: ${lastRecognitionTime != null ? now.difference(lastRecognitionTime!).inSeconds : 'N/A'}s');
         }
         
         break; // Only process the first successful recognition
@@ -177,6 +194,16 @@ class _CameraWidgetState extends State<CameraWidget>
           turnstileAccessGranted = false;
         });
       }
+    });
+  }
+
+  void _resetTurnstile() {
+    print('🔄 MANUALLY RESETTING TURNSTILE STATE');
+    context.read<TurnstileBloc>().add(ResetTurnstile());
+    setState(() {
+      turnstileAccessGranted = false;
+      lastRecognizedUser = null;
+      lastRecognitionTime = null;
     });
   }
 
@@ -524,8 +551,8 @@ class _CameraWidgetState extends State<CameraWidget>
             if (widget.isAdminMode)
               Positioned(
                 bottom: 20,
-                left: 0,
-                right: 0,
+                left: 10,
+                right: 10,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -555,6 +582,11 @@ class _CameraWidgetState extends State<CameraWidget>
                       },
                     ),
                     _buildControlButton(
+                      icon: Icons.refresh,
+                      label: "Reset\nTurnstile",
+                      onPressed: _resetTurnstile,
+                    ),
+                    _buildControlButton(
                       icon: Icons.bar_chart,
                       label: "Stats",
                       onPressed: _showFaceRecognitionStats,
@@ -577,8 +609,8 @@ class _CameraWidgetState extends State<CameraWidget>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 50,
-          height: 50,
+          width: 45,
+          height: 45,
           decoration: BoxDecoration(
             color: Colors.blue.withOpacity(0.7),
             shape: BoxShape.circle,
@@ -592,14 +624,15 @@ class _CameraWidgetState extends State<CameraWidget>
           ),
           child: IconButton(
             icon: Icon(icon, color: Colors.white),
-            iconSize: 24,
+            iconSize: 20,
             onPressed: onPressed,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: const TextStyle(color: Colors.white, fontSize: 12),
+          style: const TextStyle(color: Colors.white, fontSize: 11),
+          textAlign: TextAlign.center,
         ),
       ],
     );
